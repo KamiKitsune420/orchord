@@ -30,7 +30,7 @@ const LOOK_EVERY: Duration = Duration::from_secs(4);
 /// While macOS installs itself there is nothing to do but watch.
 const WATCH_EVERY: Duration = Duration::from_secs(15);
 /// How long the installer may take to show its first window before easy install gives up.
-const RECOVERY_START_LIMIT: Duration = Duration::from_secs(25 * 60);
+const RECOVERY_START_LIMIT: Duration = Duration::from_secs(60 * 60);
 const TERMINAL_START_WAIT: Duration = Duration::from_secs(10);
 /// If Terminal has not come forward this long after being chosen, it is chosen again.
 const TERMINAL_START_LIMIT: Duration = Duration::from_secs(45);

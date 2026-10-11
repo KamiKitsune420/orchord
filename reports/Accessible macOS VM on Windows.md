@@ -109,6 +109,20 @@ Changes this makes to the recommendations below: test and default to Sequoia 15,
 - **A kernel panic reaches the serial log.** A deliberately bad processor layout produced `panic(cpu 0 caller ...): Kernel trap ... type 0=divide error` in the serial log 11 seconds after start, and the supervisor reported it. QEMU itself stays running, frozen at the panic.
 - **QEMU holds the serial log open for writing alone.** Other programs can read it but not append to it.
 
+### Wizard, easy install, speech and the shared folder (11 October 2026)
+
+- **Speech works through Prism.** The `prismer` crate (Prism 0.18.3, MPL-2.0) hands text to NVDA. Building Prism from source needs Microsoft's ATL headers, which the Build Tools do not install, so the official prebuilt `prism.dll` is used.
+- **Apple's installer download works in Rust.** A port of OpenCore's `macrecovery` exchange fetched Monterey's 623 MB image over HTTPS, checked it against Apple's chunklist, and `qemu-img` converted it.
+- **Easy install's first stage runs unattended on Big Sur and Monterey.** From a blank disk it opened Terminal in the installer, erased the disk, started Reinstall macOS, accepted the licence, chose the disk, and reported the installer's own "About 2 hours and 19 minutes remaining". Monterey passed on its first attempt. The later stages (restarts and the first set-up screen) use the supervisor's proven restart handling but had not been run end to end when this was written.
+- **Windows' text recognition misses pale text on grey buttons.** It could not read "Agree" in the installer's dark windows. Reading each picture a second time, in greys with the bright end stretched, finds those words.
+- **QEMU's `send-key` loses key releases when text is typed quickly.** It queues every press with a delay; the queue overflows and keys stay down in the Mac. Explicit press and release events with their own timing are reliable.
+- **The pointer must be moved away after a click.** Left on a button, it splits the next page's button name in two for the text recogniser.
+- **The installer's buttons appear minutes before they work.** Giving up on a step must be by time (20 minutes here), not by a count of tries.
+- **Sequoia's installer is much slower.** It took between 6 and more than 25 minutes to show its first window, depending on what else the PC was doing, and its disk erase takes minutes, not seconds.
+- **Starting the installer can crash.** One start in about ten died with `AppleAHCIDiskQueueManager::setPowerState ... timed out`; easy install now restarts a Mac that panics while installing.
+- **MSAA is what to check, not UI Automation.** Through UI Automation every wx control shows as a nameless pane. Through MSAA, which is how NVDA reads wx programs, the wizard's fields, boxes and buttons have the right roles and names.
+- **The shared-folder server is `dav-server` on Windows' loopback address.** It answers `OPTIONS` with DAV class 2, which macOS needs before it will mount a server for writing.
+
 ## Recommendations at a glance
 
 - Engine: QEMU 11.x or newer with `-accel whpx`, started headless and controlled over QMP. Do not write an emulator or hypervisor from scratch.

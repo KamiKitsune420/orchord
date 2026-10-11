@@ -13,11 +13,12 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::time::Duration;
 
 use orchord_core::config::list_vms;
 use orchord_core::create::{self, Step};
 use orchord_core::file_server::{self, FileServer};
-use orchord_core::{AppSettings, InstallStage, POINTER_MAX, PointerButton, StopReason, Supervisor, Vm, VmCommand, VmEvent, easy_install, keys, sound};
+use orchord_core::{AppSettings, InstallStage, POINTER_MAX, PointerButton, StopReason, Supervisor, Vm, VmCommand, VmEvent, easy_install, keys, ocr, sound};
 use wxdragon::prelude::*;
 use wxdragon::widgets::GenericStaticBitmap;
 
@@ -548,7 +549,10 @@ fn start_file_server(ui: Ui, row: &mut Row) {
     // The port is kept from one run to the next because the Mac remembers the address. If
     // another program has taken it since, any free port will do and the Mac must connect again.
     let remembered = row.vm.config.shared_folder.port;
-    let server = FileServer::start(&folder, remembered.unwrap_or(0)).or_else(|_| FileServer::start(&folder, 0));
+    // A new folder first tries a short range of ports that Windows does not hand out by itself,
+    // so that the address chosen now is likely to be free every time.
+    let first_choices = remembered.into_iter().chain(8580..8600);
+    let server = first_choices.map(|port| FileServer::start(&folder, port)).find(|server| server.is_ok()).unwrap_or_else(|| FileServer::start(&folder, 0));
     match server {
         Ok(server) => {
             if remembered != Some(server.port()) {
@@ -606,14 +610,14 @@ fn open_shared_folder(ui: Ui, state: &Shared) {
 /// Types one line into the Mac's Terminal that makes the Mac connect the shared folder now
 /// and at every login. Typing is the only way in: nothing of Orchord's runs inside the Mac.
 fn connect_shared_folder(ui: Ui, state: &Shared) {
-    let (commands, port, name) = {
+    let (commands, port, name, picture) = {
         let state = state.borrow();
         let Some((index, commands, name)) = running_target(ui, &state) else { return };
         let Some(server) = &state.rows[index].file_server else {
             say(ui.frame, &format!("{name} has no shared folder running. Turn it on in Settings, Control+P, then start the Mac again."));
             return;
         };
-        (commands, server.port(), name)
+        (commands, server.port(), name, state.rows[index].vm.config_dir().join("screen.ppm"))
     };
     let question = format!(
         "Orchord will now type into {name}: it opens Terminal through Spotlight and runs one command, which makes the Mac connect the shared folder now and every time you log in.\n\nBefore you answer, make sure you are logged in to the Mac and it is at its desktop, and do not type while Orchord does. It takes about half a minute.\n\nTo do it by hand instead, press Command+K in the Mac's Finder and connect to {} as a guest.\n\nType into the Mac now?",
@@ -629,11 +633,18 @@ fn connect_shared_folder(ui: Ui, state: &Shared) {
     std::thread::spawn(move || {
         // Spotlight, then Terminal, then the command. The pauses give a slow Mac time to keep up.
         keys::press(&commands, &["meta_l", "spc"]);
-        std::thread::sleep(std::time::Duration::from_secs(2));
+        std::thread::sleep(Duration::from_secs(2));
         keys::type_text(&commands, "Terminal");
-        std::thread::sleep(std::time::Duration::from_secs(2));
+        std::thread::sleep(Duration::from_secs(2));
         keys::press(&commands, &["ret"]);
-        std::thread::sleep(std::time::Duration::from_secs(8));
+        // Terminal drops keys typed before it is ready, and how long it takes to start varies a
+        // great deal. Its Shell menu showing in the menu bar is the sign that it is in front.
+        let terminal_in_front = || ocr::read_ppm(&picture).is_ok_and(|screen| screen.find_exact("Shell").iter().any(|word| word.y < 40.0));
+        let waiting_since = std::time::Instant::now();
+        while !terminal_in_front() && waiting_since.elapsed() < Duration::from_secs(60) {
+            std::thread::sleep(Duration::from_secs(2));
+        }
+        std::thread::sleep(Duration::from_secs(4));
         keys::type_text(&commands, &file_server::setup_command(port));
         keys::press(&commands, &["ret"]);
     });

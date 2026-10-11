@@ -35,40 +35,78 @@ impl HostUsbDevice {
     }
 }
 
-/// The USB devices QEMU can see on this PC.
+/// The USB devices QEMU can see on this PC, under the names Windows gives them where QEMU
+/// has none.
 pub fn host_devices(commands: &Sender<VmCommand>) -> Result<Vec<HostUsbDevice>> {
-    Ok(parse_host_devices(&monitor(commands, "info usbhost")?))
+    let mut devices = parse_host_devices(&monitor(commands, "info usbhost")?);
+    for device in &mut devices {
+        if device.name.starts_with("USB device ") {
+            if let Some(name) = windows_name(device.vendor, device.product) {
+                device.name = name;
+            }
+        }
+    }
+    Ok(devices)
 }
 
 /// Which of `devices` are attached to the Mac at the moment.
 pub fn attached(commands: &Sender<VmCommand>, devices: &[HostUsbDevice]) -> Result<Vec<HostUsbDevice>> {
-    let listing = ask(commands, "qom-list", Some(json!({ "path": "/machine/peripheral" })))?;
-    let names: Vec<&str> = listing.as_array().into_iter().flatten().filter_map(|entry| entry["name"].as_str()).collect();
-    Ok(devices.iter().filter(|device| names.contains(&device.qemu_id().as_str())).cloned().collect())
+    Ok(devices.iter().filter(|device| is_attached(commands, device)).cloned().collect())
 }
 
 /// Takes `device` away from Windows and plugs it into the Mac.
 pub fn attach(commands: &Sender<VmCommand>, device: &HostUsbDevice) -> Result<()> {
-    let before = guest_device_count(commands)?;
     let arguments = json!({ "driver": "usb-host", "id": device.qemu_id(), "bus": "xhci.0", "vendorid": device.vendor, "productid": device.product });
     ask(commands, "device_add", Some(arguments))?;
     std::thread::sleep(OPEN_WAIT);
-    if guest_device_count(commands)? > before {
+    if is_attached(commands, device) {
         return Ok(());
     }
     // QEMU keeps the request and retries for ever; take it back so the device is not grabbed later by surprise.
     let _ = detach(commands, device);
-    bail!("Windows did not let go of the device. QEMU can only take a USB device that uses the UsbDk or WinUSB driver.")
+    bail!("Windows did not let go of the device. QEMU can only take a USB device away from Windows when the UsbDk driver is installed, or when the device uses the generic WinUSB driver.")
+}
+
+/// Whether QEMU really has hold of `device`. Adding a host device always succeeds; QEMU
+/// then opens the real device in the background, and only that shows in this property.
+fn is_attached(commands: &Sender<VmCommand>, device: &HostUsbDevice) -> bool {
+    let path = format!("/machine/peripheral/{}", device.qemu_id());
+    ask(commands, "qom-get", Some(json!({ "path": path, "property": "attached" }))).is_ok_and(|attached| attached.as_bool() == Some(true))
+}
+
+/// The name Windows shows for a USB device, from the registry's list of USB devices.
+fn windows_name(vendor: u16, product: u16) -> Option<String> {
+    let key = format!(r"HKLM\SYSTEM\CurrentControlSet\Enum\USB\VID_{vendor:04X}&PID_{product:04X}");
+    let mut command = std::process::Command::new("reg.exe");
+    command.args(["query", &key, "/s"]).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = command.output().ok()?;
+    name_from_registry(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Picks the device's name out of `reg query` output: `FriendlyName` if there is one,
+/// otherwise `DeviceDesc`, whose value looks like `@oem12.inf,%xusb.desc%;Xbox 360 Controller`.
+fn name_from_registry(listing: &str) -> Option<String> {
+    let value = |wanted: &str| {
+        listing.lines().find_map(|line| {
+            let mut parts = line.trim().splitn(3, "    ");
+            (parts.next()? == wanted).then_some(())?;
+            let text = parts.nth(1)?.trim();
+            let name = text.rsplit(';').next().unwrap_or(text).trim();
+            (!name.is_empty()).then(|| name.to_string())
+        })
+    };
+    value("FriendlyName").or_else(|| value("DeviceDesc"))
 }
 
 /// Unplugs `device` from the Mac, which gives it back to Windows.
 pub fn detach(commands: &Sender<VmCommand>, device: &HostUsbDevice) -> Result<()> {
     ask(commands, "device_del", Some(json!({ "id": device.qemu_id() }))).map(|_| ())
-}
-
-/// How many USB devices the Mac has plugged in, counting its own virtual ones.
-fn guest_device_count(commands: &Sender<VmCommand>) -> Result<usize> {
-    Ok(monitor(commands, "info usb")?.lines().filter(|line| line.trim_start().starts_with("Device ")).count())
 }
 
 /// Runs a command of QEMU's human monitor and returns what it printed.
@@ -104,7 +142,16 @@ fn parse_host_devices(listing: &str) -> Vec<HostUsbDevice> {
 
 #[cfg(test)]
 mod tests {
-    use super::{HostUsbDevice, parse_host_devices};
+    use super::{HostUsbDevice, name_from_registry, parse_host_devices};
+
+    #[test]
+    fn a_device_name_is_read_from_the_registry_listing() {
+        let listing = "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Enum\\USB\\VID_045E&PID_028E\\6&E086E1&0&4\r\n    DeviceDesc    REG_SZ    @oem12.inf,%xusb22.devicedesc%;Xbox 360 Controller for Windows\r\n    Service    REG_SZ    xusb22\r\n";
+        assert_eq!(name_from_registry(listing), Some("Xbox 360 Controller for Windows".to_string()));
+        let friendly = "    DeviceDesc    REG_SZ    USB Composite Device\r\n    FriendlyName    REG_SZ    Integrated Camera\r\n";
+        assert_eq!(name_from_registry(friendly), Some("Integrated Camera".to_string()));
+        assert_eq!(name_from_registry("ERROR: The system was unable to find the specified registry key or value."), None);
+    }
 
     #[test]
     fn the_host_listing_is_read_into_devices() {

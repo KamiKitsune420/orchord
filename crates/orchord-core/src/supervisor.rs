@@ -141,7 +141,8 @@ enum Outcome {
 
 impl Supervisor {
     pub fn new(vm: Vm, settings: AppSettings) -> Self {
-        Supervisor { vm, settings, install_media: None, debug_qmp_port: None, extra_qemu_args: Vec::new() }
+        let debug_qmp_port = settings.debug_qmp_port;
+        Supervisor { vm, settings, install_media: None, debug_qmp_port, extra_qemu_args: Vec::new() }
     }
 
     /// Runs the Mac until it shuts down, is stopped, or fails. Blocks; call it on its own thread.

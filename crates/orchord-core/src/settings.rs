@@ -21,6 +21,10 @@ pub struct AppSettings {
     /// While the keyboard is captured, Right Control is sent to the Mac as Command. Windows
     /// keeps Windows+L for itself, so without this Command+L could not be typed.
     pub right_control_is_command: bool,
+    /// For developers: a second QEMU control port on this PC's loopback address, which
+    /// diagnostic tools can connect to while Orchord runs a Mac. Absent in normal use.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub debug_qmp_port: Option<u16>,
 }
 
 impl Default for AppSettings {
@@ -33,6 +37,7 @@ impl Default for AppSettings {
             osk: String::new(),
             other_vms: Vec::new(),
             right_control_is_command: true,
+            debug_qmp_port: None,
         }
     }
 }

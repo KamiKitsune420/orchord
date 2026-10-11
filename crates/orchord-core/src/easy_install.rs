@@ -34,7 +34,8 @@ const RECOVERY_START_LIMIT: Duration = Duration::from_secs(25 * 60);
 const TERMINAL_START_WAIT: Duration = Duration::from_secs(10);
 /// If Terminal has not come forward this long after being chosen, it is chosen again.
 const TERMINAL_START_LIMIT: Duration = Duration::from_secs(45);
-const ERASE_LIMIT: Duration = Duration::from_secs(180);
+/// Erasing takes seconds on Big Sur and Monterey and several minutes in Sequoia's installer.
+const ERASE_LIMIT: Duration = Duration::from_secs(15 * 60);
 /// The same answer to the same screen for this long means it is not working. It has to be
 /// generous: the installer shows its Continue button minutes before the button does anything.
 const STUCK_LIMIT: Duration = Duration::from_secs(20 * 60);
@@ -119,6 +120,7 @@ enum Rule {
     ChooseTerminal,
     TypeErase,
     QuitTerminal,
+    LeaveWrongProgram,
     ChooseReinstall,
     Agree,
     ChooseDisk,
@@ -251,9 +253,12 @@ impl Driver {
             return;
         }
 
-        if terminal_in_front {
-            // Command+Q is only safe with Terminal in front: in the installer itself it means "quit the installer".
-            if !self.repeated(Rule::QuitTerminal) {
+        // One of the other programs on the installer's first window, opened by a click that
+        // landed before the window was ready. Its name is the first thing in the menu bar.
+        let wrong_program = ["Time Machine System Restore", "Disk Utility", "Safari"].iter().any(|name| screen.find_all(name).iter().any(|word| word.y < MENU_BAR_HEIGHT));
+        if terminal_in_front || (wrong_program && !main_window) {
+            // Command+Q is only safe with one of those in front: in the installer's own window it means "quit the installer".
+            if !self.repeated(if terminal_in_front { Rule::QuitTerminal } else { Rule::LeaveWrongProgram }) {
                 self.press(&["meta_l", "q"]);
             }
         } else if let Some(disk) = self.disk_to_choose(screen) {
@@ -273,7 +278,9 @@ impl Driver {
             if !self.repeated(Rule::ChooseReinstall) {
                 if let Some(choice) = screen.find("Reinstall macOS") {
                     self.click(screen, choice);
-                    std::thread::sleep(Duration::from_millis(1000));
+                    // A slow Mac needs a moment to move the selection; Continue pressed too soon
+                    // starts whatever was selected before, which is Time Machine.
+                    std::thread::sleep(Duration::from_secs(4));
                 }
                 if let Some(button) = screen.find_exact("Continue").into_iter().last() {
                     self.click(screen, button);
@@ -359,7 +366,7 @@ impl Driver {
         if self.rule_since.elapsed() >= STUCK_LIMIT {
             self.stand_down(match rule {
                 Rule::OpenUtilitiesMenu | Rule::ChooseTerminal | Rule::TypeErase | Rule::QuitTerminal => "it could not use Terminal in the installer",
-                Rule::ChooseReinstall | Rule::Continue => "the installer did not move on",
+                Rule::ChooseReinstall | Rule::Continue | Rule::LeaveWrongProgram => "the installer did not move on",
                 Rule::Agree => "the licence page did not move on",
                 Rule::ChooseDisk => "the installer did not accept the Mac's disk",
             });

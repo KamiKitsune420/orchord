@@ -47,7 +47,8 @@ and adds the window, the installer automation, the speech and the file sharing a
 - Control+L: switch between the Mac's screen and the status log.
 - Control+P: settings for the Mac.
 - Control+U: USB devices.
-- Control+Comma: Orchord's own settings (QEMU folder, where Macs are kept, the Apple SMC key).
+- Control+Comma: Orchord's own settings (checking and setting up the PC, the QEMU folder,
+  where Macs are kept, the Apple SMC key).
 - F5: read the list of Macs again.
 
 While the keyboard is captured, Right Control and the Menu key work as extra Command keys,
@@ -81,15 +82,22 @@ responsive; animation is not.
 
 ## What you need
 
-- Windows 10 or 11 on an Intel processor, with the Windows Hypervisor Platform feature on
-  (Turn Windows features on or off, then restart).
-- QEMU 11 or newer (`winget install SoftwareFreedomConservancy.QEMU`).
-- The Microsoft Visual C++ Redistributable, which most PCs already have
-  (`winget install Microsoft.VCRedist.2015+.x64`). Without it Windows says that
-  `VCRUNTIME140.dll` was not found.
-- The Apple SMC key: a 64-character string that QEMU's Apple SMC device has to present before
-  macOS will start. Orchord does not come with it; see "Getting the Apple SMC key" below.
-- A text recognition language installed in Windows, for easy install.
+Windows 10 or 11 on an Intel processor. Orchord's "Check and set up this PC" button looks for
+the rest and offers to get what is missing:
+
+- **QEMU 11 or newer.** The button installs it with winget, Windows' own package manager,
+  which downloads QEMU's installer from QEMU's site; Windows asks for permission. By hand:
+  `winget install SoftwareFreedomConservancy.QEMU`.
+- **The Windows Hypervisor Platform feature.** The button asks QEMU whether it can use it,
+  and if not, turns the feature on; Windows asks for permission and has to be restarted. By
+  hand: Turn Windows features on or off, check Windows Hypervisor Platform, restart.
+- **The Apple SMC key,** a 64-character string that QEMU's Apple SMC device has to present
+  before macOS will start. Orchord does not come with it; the button fetches it after asking.
+  See "Getting the Apple SMC key" below.
+- **A text recognition language in Windows,** for easy install. The button says whether
+  there is one, and where to add one.
+
+The button changes nothing without a Yes from you.
 
 ## Getting started
 
@@ -97,10 +105,11 @@ responsive; animation is not.
    Keep the files together: `prism.dll` and the `opencore` folder must stay beside
    `orchord.exe`.
 2. Start `orchord.exe`. The first time, it says that it is not fully set up.
-3. Open File, Orchord Settings (Control+Comma). Check the QEMU folder, choose where virtual
-   machines are kept, and press "Get the key from the internet" for the Apple SMC key; the
-   next section says what that does and what else you can do.
-4. Press Control+N to create a Mac.
+3. Open File, Orchord Settings (Control+Comma). The first button there is "Check and set up
+   this PC". Press it and answer its questions; it ends by saying whether the PC is ready.
+4. Choose where virtual machines are kept, if the folder offered does not suit you, and
+   press OK.
+5. Press Control+N to create a Mac.
 
 The settings are kept in `%APPDATA%\orchord\settings.toml`.
 

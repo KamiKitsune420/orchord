@@ -206,6 +206,19 @@ fn recognise(_bgra: &[u8], _width: u32, _height: u32) -> Result<ScreenText> {
     Err(anyhow!("text recognition needs Windows"))
 }
 
+/// Whether Windows has a text recognition language installed. Easy install reads the Mac's
+/// screen with it.
+pub fn available() -> bool {
+    #[cfg(windows)]
+    {
+        windows::Media::Ocr::OcrEngine::TryCreateFromUserProfileLanguages().is_ok()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Line, ScreenText, Word, add_new_words, decode_ppm, double_to_bgra, sharpen_contrast};

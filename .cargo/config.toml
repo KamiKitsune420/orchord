@@ -1,2 +1,8 @@
 [env]
 PRISM_LIB_DIR = { value = "third_party/prism/lib", relative = true }
+
+# Microsoft's C and C++ runtime is built into the program, so that it starts on a PC that
+# does not have the Visual C++ Redistributable installed. wxWidgets is built the same way;
+# its build script follows this setting.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

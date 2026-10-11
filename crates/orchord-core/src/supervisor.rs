@@ -185,7 +185,10 @@ impl Supervisor {
                 Err(_) => {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Ok(StopReason::Failed(format!("QEMU did not start. {}", self.qemu_log_tail())));
+                    let said = self.qemu_log_tail();
+                    // The commonest reason on a new PC, and the one Orchord can put right itself.
+                    let hint = if said.to_lowercase().contains("whpx") { " The Windows Hypervisor Platform may be turned off: open Orchord Settings from the File menu and press Check and set up this PC." } else { "" };
+                    return Ok(StopReason::Failed(format!("QEMU did not start. {said}{hint}")));
                 }
             };
             // Later launches follow a restart, which has already played its own cue.

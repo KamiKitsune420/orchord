@@ -5,6 +5,7 @@
 //!   orchord-vm new <name> <location> <big-sur|monterey|sequoia> <apple|installer-file> [--easy]
 //!   orchord-vm read <screen.ppm>      prints the text recognised on a picture of a Mac's screen
 //!   orchord-vm smc-key                says whether each public source still holds the Apple SMC key
+//!   orchord-vm check                  says whether this PC has what a Mac needs, changing nothing
 //!
 //! A Mac set up for easy install whose macOS is not installed yet is run through easy install,
 //! exactly as the window does it.
@@ -32,6 +33,18 @@ fn main() -> Result<()> {
         for line in orchord_core::ocr::read_ppm(&PathBuf::from(picture))?.lines {
             println!("{}", line.words.iter().map(|word| format!("{}@{:.0},{:.0}", word.text, word.x, word.y)).collect::<Vec<_>>().join("  "));
         }
+        return Ok(());
+    }
+    if first == "check" {
+        // What Orchord Settings' "Check and set up this PC" looks at, without changing anything.
+        let qemu = settings.qemu_exe().is_file();
+        println!("QEMU at {}: {}", settings.qemu_dir.display(), if qemu { "found" } else { "not found" });
+        println!("winget: {}", if orchord_core::setup::winget().is_some() { "found" } else { "not found" });
+        if qemu {
+            println!("Windows Hypervisor Platform: {}", orchord_core::setup::hypervisor_problem(&settings).unwrap_or_else(|| "works".to_string()));
+        }
+        println!("Apple SMC key: {}", if orchord_core::smc_key::is_genuine(&settings.osk) { "entered" } else { "not entered, or not the key" });
+        println!("Text recognition: {}", if orchord_core::ocr::available() { "available" } else { "no language installed" });
         return Ok(());
     }
     if first == "smc-key" {

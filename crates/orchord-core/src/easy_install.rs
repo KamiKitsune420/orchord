@@ -31,9 +31,15 @@ const LOOK_EVERY: Duration = Duration::from_secs(4);
 const WATCH_EVERY: Duration = Duration::from_secs(15);
 /// How long the installer may take to show its first window before easy install gives up.
 const RECOVERY_START_LIMIT: Duration = Duration::from_secs(25 * 60);
+const TERMINAL_START_WAIT: Duration = Duration::from_secs(10);
+/// If Terminal has not come forward this long after being chosen, it is chosen again.
+const TERMINAL_START_LIMIT: Duration = Duration::from_secs(45);
 const ERASE_LIMIT: Duration = Duration::from_secs(180);
-/// The same answer to the same screen this many times in a row means it is not working.
-const REPEAT_LIMIT: u32 = 10;
+/// The same answer to the same screen for this long means it is not working. It has to be
+/// generous: the installer shows its Continue button minutes before the button does anything.
+const STUCK_LIMIT: Duration = Duration::from_secs(20 * 60);
+/// After this many tries of one answer the driver slows down, so as not to hammer a busy Mac.
+const PATIENT_AFTER: u32 = 3;
 const CRASH_RESTART_LIMIT: u32 = 3;
 const PROGRESS_EVERY: Duration = Duration::from_secs(15 * 60);
 /// Words this near the top of the Mac's screen are in its menu bar.
@@ -92,11 +98,14 @@ struct Driver {
     next_look: Instant,
     /// When a picture was asked for, while it has not arrived yet.
     asked: Option<Instant>,
+    terminal_chosen: Option<Instant>,
     terminal_seen: Option<Instant>,
     erase_typed: Option<Instant>,
     erased: bool,
     last_rule: Option<Rule>,
     repeats: u32,
+    /// When the current run of one repeated answer began.
+    rule_since: Instant,
     last_progress: Option<Instant>,
     crash_restarts: u32,
     /// Easy install has stopped trying; the Mac is the user's from here.
@@ -120,7 +129,7 @@ impl Driver {
     fn new(vm: Vm, commands: Sender<VmCommand>, events: Sender<VmEvent>) -> Self {
         let picture = vm.config_dir().join("install-screen.ppm");
         let now = Instant::now();
-        Driver { vm, picture, commands, events, running: false, started: now, launch_started: now, next_look: now, asked: None, terminal_seen: None, erase_typed: None, erased: false, last_rule: None, repeats: 0, last_progress: None, crash_restarts: 0, stood_down: false }
+        Driver { vm, picture, commands, events, running: false, started: now, launch_started: now, next_look: now, asked: None, terminal_chosen: None, terminal_seen: None, erase_typed: None, erased: false, last_rule: None, repeats: 0, rule_since: now, last_progress: None, crash_restarts: 0, stood_down: false }
     }
 
     fn note(&self, text: &str) {
@@ -137,6 +146,7 @@ impl Driver {
                 self.launch_started = Instant::now();
                 self.next_look = Instant::now() + LOOK_EVERY;
                 // A new start of the installer begins with no Terminal open.
+                self.terminal_chosen = None;
                 self.terminal_seen = None;
                 self.erase_typed = None;
                 self.last_rule = None;
@@ -196,7 +206,7 @@ impl Driver {
         let main_window = screen.contains("Reinstall macOS") && screen.contains("Disk Utility");
         if !self.erased {
             if let Some(typed) = self.erase_typed {
-                let mistyped = screen.contains("syntax error") || screen.contains("command not found");
+                let mistyped = ["syntax error", "command not found", "event not found", "unexpected EOF", "No such file"].iter().any(|sign| screen.contains(sign));
                 if mistyped && typed.elapsed() > LOOK_EVERY {
                     // A key went missing on the way. Typing again starts by clearing the window.
                     self.erase_typed = None;
@@ -213,8 +223,11 @@ impl Driver {
                 if !ready || self.repeated(Rule::TypeErase) {
                     return;
                 }
+                // Escape closes a menu that may still be open and would swallow the first keys.
                 // Control+C drops anything half typed and Control+L wipes the window, so that
                 // an earlier attempt's error message is not read as this attempt's.
+                self.press(&["esc"]);
+                std::thread::sleep(Duration::from_secs(1));
                 self.press(&["ctrl", "c"]);
                 self.press(&["ctrl", "l"]);
                 std::thread::sleep(Duration::from_secs(1));
@@ -225,8 +238,13 @@ impl Driver {
                 // Either the Terminal item of the open Utilities menu, or the title of a Terminal
                 // window that is not in front; clicking brings Terminal forward both times.
                 self.answer(Rule::ChooseTerminal, screen, item);
+                // Terminal takes a while to start; looking sooner would only open the menu again.
+                self.terminal_chosen = Some(Instant::now());
+                self.next_look = Instant::now() + TERMINAL_START_WAIT;
             } else if let Some(menu) = screen.find_exact("Utilities").into_iter().find(|word| word.y < MENU_BAR_HEIGHT).filter(|_| main_window) {
-                self.answer(Rule::OpenUtilitiesMenu, screen, menu);
+                if self.terminal_chosen.is_none_or(|chosen| chosen.elapsed() > TERMINAL_START_LIMIT) {
+                    self.answer(Rule::OpenUtilitiesMenu, screen, menu);
+                }
             } else if self.launch_started.elapsed() > RECOVERY_START_LIMIT {
                 self.stand_down("the installer did not show its first window");
             }
@@ -243,7 +261,9 @@ impl Driver {
                 self.click(screen, disk);
                 std::thread::sleep(Duration::from_millis(1500));
                 // The button under the disks reads Continue or Install, depending on the version.
-                if let Some(button) = screen.find_exact("Continue").into_iter().chain(screen.find_exact("Install")).last() {
+                // "Install" is also the first word of the menu bar, so only the lower half counts.
+                let lower_half = |word: &&Word| word.y > screen.height as f32 / 2.0;
+                if let Some(button) = screen.find_exact("Continue").into_iter().chain(screen.find_exact("Install")).filter(lower_half).last() {
                     self.click(screen, button);
                 }
             }
@@ -326,9 +346,17 @@ impl Driver {
     /// Counts how often the same rule fired in a row. True means easy install has given up.
     fn repeated(&mut self, rule: Rule) -> bool {
         self.diary(&format!("rule: {rule:?}"));
-        self.repeats = if self.last_rule == Some(rule) { self.repeats + 1 } else { 0 };
+        if self.last_rule == Some(rule) {
+            self.repeats += 1;
+        } else {
+            self.repeats = 0;
+            self.rule_since = Instant::now();
+        }
         self.last_rule = Some(rule);
-        if self.repeats >= REPEAT_LIMIT {
+        if self.repeats >= PATIENT_AFTER {
+            self.next_look = Instant::now() + WATCH_EVERY;
+        }
+        if self.rule_since.elapsed() >= STUCK_LIMIT {
             self.stand_down(match rule {
                 Rule::OpenUtilitiesMenu | Rule::ChooseTerminal | Rule::TypeErase | Rule::QuitTerminal => "it could not use Terminal in the installer",
                 Rule::ChooseReinstall | Rule::Continue => "the installer did not move on",
@@ -352,6 +380,10 @@ impl Driver {
         let _ = self.commands.send(VmCommand::PointerButton { button: PointerButton::Left, down: true });
         std::thread::sleep(Duration::from_millis(130));
         let _ = self.commands.send(VmCommand::PointerButton { button: PointerButton::Left, down: false });
+        // The pointer is then parked at the left edge: left where it clicked, it would cover
+        // the next page's button, which is often in the same place, and hide its name.
+        std::thread::sleep(Duration::from_millis(400));
+        let _ = self.commands.send(VmCommand::PointerMove { x: 0, y: POINTER_MAX / 2 });
     }
 
     fn press(&self, keys: &[&str]) {
@@ -363,13 +395,14 @@ impl Driver {
     }
 }
 
-/// The licence's Agree button: the one on the confirmation sheet when that is showing,
-/// otherwise the one at the bottom of the licence page.
+/// The licence's Agree button. The licence page has one at the bottom. Pressing it brings up
+/// a confirmation, "I have read and agree to the terms...", with an Agree button of its own
+/// while the page's button stays visible underneath, dimmed; then the confirmation's button
+/// is the one to press, and it is the first Agree below the confirmation's sentence.
 fn agree_button(screen: &ScreenText) -> Option<&Word> {
     let buttons = screen.find_exact("Agree");
-    match screen.find("Read License") {
-        // The sheet's buttons sit side by side, so its Agree is the one level with Read License.
-        Some(sheet) => buttons.into_iter().min_by(|a, b| (a.y - sheet.y).abs().total_cmp(&(b.y - sheet.y).abs())),
+    match screen.find("I have read and agree") {
+        Some(sentence) => buttons.into_iter().find(|button| button.y > sentence.y),
         None => buttons.into_iter().last(),
     }
 }
@@ -404,11 +437,13 @@ mod tests {
     }
 
     #[test]
-    fn with_the_confirmation_sheet_showing_its_own_agree_is_chosen() {
-        let sheet = screen(vec![
-            vec![word("Read", 500.0, 150.0), word("License", 550.0, 150.0), word("Disagree", 650.0, 150.0), word("Agree", 760.0, 151.0)],
-            vec![word("Disagree", 900.0, 700.0), word("Agree", 1000.0, 700.0)],
+    fn with_the_confirmation_showing_its_own_agree_is_chosen() {
+        // The positions are those of Big Sur's installer: the confirmation sits over the page.
+        let confirmation = screen(vec![
+            vec![word("I", 550.0, 381.0), word("have", 560.0, 381.0), word("read", 595.0, 381.0), word("and", 630.0, 381.0), word("agree", 660.0, 381.0), word("to", 700.0, 381.0), word("the", 715.0, 381.0)],
+            vec![word("Disagree", 554.0, 452.0), word("Agree", 681.0, 452.0)],
+            vec![word("Disagree", 568.0, 642.0), word("Agree", 667.0, 642.0)],
         ]);
-        assert_eq!(agree_button(&sheet).map(|word| word.y), Some(151.0));
+        assert_eq!(agree_button(&confirmation).map(|word| word.y), Some(452.0));
     }
 }

@@ -18,6 +18,9 @@ pub struct AppSettings {
     pub osk: String,
     /// Virtual machines the user created somewhere other than under `vm_root`.
     pub other_vms: Vec<PathBuf>,
+    /// While the keyboard is captured, Right Control is sent to the Mac as Command. Windows
+    /// keeps Windows+L for itself, so without this Command+L could not be typed.
+    pub right_control_is_command: bool,
 }
 
 impl Default for AppSettings {
@@ -29,6 +32,7 @@ impl Default for AppSettings {
             vm_root: documents.join("Orchord Virtual Machines"),
             osk: String::new(),
             other_vms: Vec::new(),
+            right_control_is_command: true,
         }
     }
 }
@@ -54,6 +58,11 @@ impl AppSettings {
 
     pub fn save(&self) -> Result<()> {
         let path = Self::path();
+        // A file that cannot be read was not what these settings were loaded from; replacing
+        // it would throw away whatever the user has in it.
+        if path.exists() && Self::load_from(&path).is_err() {
+            anyhow::bail!("{} has a mistake in it, so it was left as it is.", path.display());
+        }
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }

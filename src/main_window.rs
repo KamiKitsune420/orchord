@@ -38,6 +38,7 @@ const ID_TOGGLE_LOG: Id = ID_HIGHEST + 15;
 const ID_OPEN_SHARED: Id = ID_HIGHEST + 16;
 const ID_CONNECT_SHARED: Id = ID_HIGHEST + 17;
 const ID_USB: Id = ID_HIGHEST + 18;
+const ID_RIGHT_CONTROL: Id = ID_HIGHEST + 19;
 
 const EMPTY_LIST_TEXT: &str = "No virtual machines created yet. To create one, go to File > New Virtual Machine, or press Control plus N.";
 const TICK_MS: i32 = 250;
@@ -153,6 +154,8 @@ pub fn show() {
 
     let frame = Frame::builder().with_title("Orchord").with_size(Size::new(900, 700)).build();
     let panel = Panel::builder(&frame).build();
+    // wxWidgets would otherwise present the panel to screen readers as an object called "panel".
+    panel.set_name("");
     let sizer = BoxSizer::builder(Orientation::Vertical).build();
     // Each label is created immediately before its control so that it becomes the control's name.
     let list_label = StaticText::builder(&panel).with_label("&Virtual machines:").build();
@@ -184,6 +187,11 @@ pub fn show() {
 
     bind_pointer(ui, &state);
     frame.set_menu_bar(build_menu_bar());
+    let right_control = state.borrow().settings.right_control_is_command;
+    keyboard_capture::set_right_control_is_command(right_control);
+    if let Some(item) = frame.get_menu_bar().and_then(|bar| bar.find_item(ID_RIGHT_CONTROL)) {
+        item.check(right_control);
+    }
     frame.create_status_bar(1, 0, ID_ANY as Id, "status");
     fill_list(list, &state.borrow());
     show_list(ui);
@@ -202,6 +210,7 @@ pub fn show() {
             ID_OPEN_SHARED => open_shared_folder(ui, &state),
             ID_CONNECT_SHARED => connect_shared_folder(ui, &state),
             ID_USB => usb_devices(ui, &state),
+            ID_RIGHT_CONTROL => toggle_right_control(ui, &state),
             ID_POWER_RESTART => power_restart(ui, &state),
             ID_POWER_SHUT_DOWN => power_shut_down(ui, &state),
             ID_POWER_SUSPEND => power_suspend(ui, &state),
@@ -265,6 +274,7 @@ fn build_menu_bar() -> MenuBar {
     let machine = Menu::builder()
         .append_item(ID_START, "&Start\tEnter", "Start the selected virtual machine")
         .append_item(ID_CAPTURE, "Send &Keyboard to the Mac\tCtrl+G", "Send every key to the Mac. Press and release Control and Alt together to get the keyboard back.")
+        .append_check_item(ID_RIGHT_CONTROL, "Right Control Works as Co&mmand", "While the keyboard is captured, Right Control and the Menu key act as the Mac's Command key, so that Command+L can be typed")
         .append_item(ID_USB, "&USB Devices...	Ctrl+U", "Connect a USB device plugged into this PC to the Mac, or give one back to Windows")
         .append_item(ID_TOGGLE_LOG, "Switch Between Mac Screen and Status &Log\tCtrl+L", "Show the status log in place of the Mac's screen, or the screen again")
         .append_separator()
@@ -431,6 +441,9 @@ fn start_selected(ui: Ui, state: &Shared) {
     show_console(ui, row);
     log_line(ui, &format!("{} is starting. Press Control+G to send the keyboard to the Mac, Alt+P for the power menu, and Control+L to switch between the Mac's screen and this status log.", row.vm.config.name));
     start_file_server(ui, row);
+    for cleaner in orchord_core::host::memory_cleaners_running() {
+        log_line(ui, &format!("Warning: {cleaner} is running on this PC. Memory cleaners take a running Mac's memory away and can stall it for a long time. Close {cleaner} while the Mac runs."));
+    }
     match (row.vm.config.install.stage, row.vm.config.install.easy) {
         (InstallStage::Done, _) | (_, true) => {}
         (InstallStage::NotStarted, false) => log_line(ui, "This Mac has no macOS yet, so it is starting from the installer. When it has started, press Control+G and then Windows+F5, which is Command+F5 on the Mac, to turn VoiceOver on."),
@@ -547,6 +560,23 @@ fn start_file_server(ui: Ui, row: &mut Row) {
             row.file_server = Some(server);
         }
         Err(error) => log_line(ui, &format!("The shared folder could not be turned on. {error:#}")),
+    }
+}
+
+fn toggle_right_control(ui: Ui, state: &Shared) {
+    let mut state = state.borrow_mut();
+    let enabled = !state.settings.right_control_is_command;
+    state.settings.right_control_is_command = enabled;
+    keyboard_capture::set_right_control_is_command(enabled);
+    if let Some(item) = ui.frame.get_menu_bar().and_then(|bar| bar.find_item(ID_RIGHT_CONTROL)) {
+        item.check(enabled);
+    }
+    if let Err(error) = state.settings.save() {
+        say(ui.frame, &format!("The settings file could not be saved. {error:#}"));
+    } else if enabled {
+        say(ui.frame, "Right Control now works as Command while the keyboard is captured.");
+    } else {
+        say(ui.frame, "Right Control is Control again. The Menu key still works as Command.");
     }
 }
 
@@ -783,6 +813,10 @@ fn pump_events(ui: Ui, state: &mut State, notices: &mut Vec<String>) {
                 }
                 VmEvent::Crashed(panic) => {
                     log_line(ui, &format!("{name} has crashed. macOS reported: {panic}"));
+                    // Easy install deals with a crash itself, and says so; a dialog would only be in the way.
+                    if row.easy_install_active() {
+                        continue;
+                    }
                     notices.push(format!("{name} has crashed. macOS stopped with a kernel panic and is frozen. Choose Force Restart or Force Power Off from the Machine menu.\n\nmacOS reported: {panic}"));
                 }
                 VmEvent::InstallStage(stage) => {

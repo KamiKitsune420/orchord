@@ -6,6 +6,9 @@
 //! reach macOS and VoiceOver. Windows itself never passes Control+Alt+Delete or Windows+L
 //! to a hook.
 //!
+//! Windows+L is the one Command shortcut that cannot be sent, so the Menu key always works as
+//! a second Command key, and Right Control does too unless the user turns that off.
+//!
 //! The keyboard is released by pressing Control and Alt together and letting go without
 //! touching another key. Control+Alt with another key is left alone, because Control+Option
 //! is VoiceOver's modifier.
@@ -26,6 +29,9 @@ const VK_LCONTROL: u32 = 0xA2;
 const VK_RCONTROL: u32 = 0xA3;
 const VK_LMENU: u32 = 0xA4;
 const VK_RMENU: u32 = 0xA5;
+const VK_APPS: u32 = 0x5D;
+/// The right-hand Windows key, which the Mac takes as its right Command key.
+const RIGHT_COMMAND_SCANCODE: u8 = 0xDC;
 
 /// Scancodes of every modifier, sent as key-ups on release so none stays stuck down in the Mac:
 /// left and right Control, Alt, Shift and Windows.
@@ -39,6 +45,12 @@ static ALT_DOWN: AtomicBool = AtomicBool::new(false);
 /// True from the moment Control and Alt are both down until any other key is pressed.
 static RELEASE_ARMED: AtomicBool = AtomicBool::new(false);
 static RELEASE_REQUESTED: AtomicBool = AtomicBool::new(false);
+static RIGHT_CONTROL_IS_COMMAND: AtomicBool = AtomicBool::new(true);
+
+/// Chooses whether Right Control is sent to the Mac as Command. Takes effect at once.
+pub fn set_right_control_is_command(enabled: bool) {
+    RIGHT_CONTROL_IS_COMMAND.store(enabled, Ordering::SeqCst);
+}
 
 pub fn is_captured() -> bool {
     HOOK.load(Ordering::SeqCst) != 0
@@ -106,10 +118,11 @@ unsafe extern "system" fn hook_procedure(code: i32, wparam: WPARAM, lparam: LPAR
     }
 
     let down = matches!(wparam as u32, WM_KEYDOWN | WM_SYSKEYDOWN);
-    let is_control = matches!(key.vkCode, VK_LCONTROL | VK_RCONTROL);
+    let extra_command = key.vkCode == VK_APPS || (key.vkCode == VK_RCONTROL && RIGHT_CONTROL_IS_COMMAND.load(Ordering::SeqCst));
+    let is_control = matches!(key.vkCode, VK_LCONTROL | VK_RCONTROL) && !extra_command;
     let is_alt = matches!(key.vkCode, VK_LMENU | VK_RMENU);
     let extended = key.flags & LLKHF_EXTENDED != 0;
-    let scancode = key.scanCode as u8 | if extended { 0x80 } else { 0 };
+    let scancode = if extra_command { RIGHT_COMMAND_SCANCODE } else { key.scanCode as u8 | if extended { 0x80 } else { 0 } };
 
     if is_control || is_alt {
         let was_armed = RELEASE_ARMED.load(Ordering::SeqCst);

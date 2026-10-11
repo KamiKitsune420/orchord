@@ -8,6 +8,7 @@ pub mod config;
 pub mod create;
 pub mod easy_install;
 pub mod file_server;
+pub mod host;
 pub mod keys;
 pub mod macos;
 pub mod ocr;

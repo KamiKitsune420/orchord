@@ -54,6 +54,8 @@ struct Controls {
     next: Button,
 }
 
+// Each page panel's built-in name is cleared: wxWidgets would otherwise present every panel
+// to screen readers as an object called "panel".
 /// Shows the wizard. Returns `None` if the user cancelled.
 pub fn run(parent: Frame, settings: &AppSettings) -> Option<Answers> {
     let dialog = Dialog::builder(&parent, "New Virtual Machine").build();
@@ -62,6 +64,7 @@ pub fn run(parent: Frame, settings: &AppSettings) -> Option<Answers> {
 
     // Page 1: name and location.
     let page = Panel::builder(&book).build();
+    page.set_name("");
     let page_sizer = BoxSizer::builder(Orientation::Vertical).build();
     let name_label = StaticText::builder(&page).with_label("Virtual machine &name:").build();
     let name = TextCtrl::builder(&page).build();
@@ -76,6 +79,7 @@ pub fn run(parent: Frame, settings: &AppSettings) -> Option<Answers> {
 
     // Page 2: version, installer and easy install.
     let page = Panel::builder(&book).build();
+    page.set_name("");
     let page_sizer = BoxSizer::builder(Orientation::Vertical).build();
     let version_label = StaticText::builder(&page).with_label("macOS &version:").build();
     let version = Choice::builder(&page).with_choices(VERSIONS.iter().map(|version| version.display_name().to_string()).collect()).with_selection(Some(0)).build();
@@ -104,6 +108,7 @@ pub fn run(parent: Frame, settings: &AppSettings) -> Option<Answers> {
 
     // Page 3: memory, processor cores and disk size.
     let page = Panel::builder(&book).build();
+    page.set_name("");
     let page_sizer = BoxSizer::builder(Orientation::Vertical).build();
     let memory_label = StaticText::builder(&page).with_label("&Memory in gigabytes:").build();
     let memory = SpinCtrl::builder(&page).with_range(2, 32).with_initial_value(VERSIONS[0].default_memory_mb() as i32 / MEMORY_STEP_MB).build();
@@ -119,6 +124,7 @@ pub fn run(parent: Frame, settings: &AppSettings) -> Option<Answers> {
 
     // Page 4: overview.
     let page = Panel::builder(&book).build();
+    page.set_name("");
     let page_sizer = BoxSizer::builder(Orientation::Vertical).build();
     let overview_label = StaticText::builder(&page).with_label("&Overview of the new virtual machine:").build();
     let overview = TextCtrl::builder(&page).with_style(TextCtrlStyle::MultiLine | TextCtrlStyle::ReadOnly).with_size(Size::new(520, 190)).build();

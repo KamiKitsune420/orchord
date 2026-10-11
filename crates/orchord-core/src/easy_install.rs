@@ -34,7 +34,10 @@ const RECOVERY_START_LIMIT: Duration = Duration::from_secs(25 * 60);
 const ERASE_LIMIT: Duration = Duration::from_secs(180);
 /// The same answer to the same screen this many times in a row means it is not working.
 const REPEAT_LIMIT: u32 = 10;
+const CRASH_RESTART_LIMIT: u32 = 3;
 const PROGRESS_EVERY: Duration = Duration::from_secs(15 * 60);
+/// Words this near the top of the Mac's screen are in its menu bar.
+const MENU_BAR_HEIGHT: f32 = 30.0;
 const PICTURE_LIMIT: Duration = Duration::from_secs(30);
 
 /// Finds the one disk with no partition table (the new Mac's empty disk) and erases it.
@@ -84,6 +87,7 @@ struct Driver {
     commands: Sender<VmCommand>,
     events: Sender<VmEvent>,
     running: bool,
+    started: Instant,
     launch_started: Instant,
     next_look: Instant,
     /// When a picture was asked for, while it has not arrived yet.
@@ -94,6 +98,7 @@ struct Driver {
     last_rule: Option<Rule>,
     repeats: u32,
     last_progress: Option<Instant>,
+    crash_restarts: u32,
     /// Easy install has stopped trying; the Mac is the user's from here.
     stood_down: bool,
 }
@@ -115,10 +120,11 @@ impl Driver {
     fn new(vm: Vm, commands: Sender<VmCommand>, events: Sender<VmEvent>) -> Self {
         let picture = vm.config_dir().join("install-screen.ppm");
         let now = Instant::now();
-        Driver { vm, picture, commands, events, running: false, launch_started: now, next_look: now, asked: None, terminal_seen: None, erase_typed: None, erased: false, last_rule: None, repeats: 0, last_progress: None, stood_down: false }
+        Driver { vm, picture, commands, events, running: false, started: now, launch_started: now, next_look: now, asked: None, terminal_seen: None, erase_typed: None, erased: false, last_rule: None, repeats: 0, last_progress: None, crash_restarts: 0, stood_down: false }
     }
 
     fn note(&self, text: &str) {
+        self.diary(&format!("said: {text}"));
         let _ = self.events.send(VmEvent::InstallNote(text.to_string()));
     }
 
@@ -137,6 +143,14 @@ impl Driver {
                 self.repeats = 0;
             }
             VmEvent::GuestRestart { .. } => self.running = false,
+            // A Mac that panics while installing is frozen for good; starting it again usually
+            // gets past whatever went wrong, and the installer picks up where it was.
+            VmEvent::Crashed(_) if self.crash_restarts < CRASH_RESTART_LIMIT && !self.stood_down => {
+                self.crash_restarts += 1;
+                self.note("macOS crashed while installing. Easy install is restarting the Mac to try again.");
+                let _ = self.commands.send(VmCommand::Reset);
+            }
+            VmEvent::Crashed(_) => self.stand_down("macOS keeps crashing while installing"),
             VmEvent::InstallStage(stage) => {
                 self.vm.config.install.stage = *stage;
                 if *stage == InstallStage::Copied {
@@ -162,6 +176,8 @@ impl Driver {
         self.asked = None;
         self.next_look = Instant::now() + LOOK_EVERY;
         let Ok(screen) = ocr::read_ppm(&self.picture) else { return };
+        let seen: String = screen.text().split_whitespace().collect::<Vec<_>>().join(" ").chars().take(260).collect();
+        self.diary(&format!("saw: {seen}"));
         match self.vm.config.install.stage {
             InstallStage::NotStarted => self.work_the_installer(&screen),
             InstallStage::Copied => self.watch_macos_install(&screen),
@@ -174,7 +190,9 @@ impl Driver {
         if self.say_progress(screen) {
             return;
         }
-        let terminal_open = screen.lines.iter().flat_map(|line| &line.words).any(|word| word.text.to_lowercase().contains("bash"));
+        // Terminal's own menu bar has a Shell menu; that tells Terminal in front from a Terminal
+        // window left behind another program, which takes no keys.
+        let terminal_in_front = screen.find_exact("Shell").into_iter().any(|word| word.y < MENU_BAR_HEIGHT);
         let main_window = screen.contains("Reinstall macOS") && screen.contains("Disk Utility");
         if !self.erased {
             if let Some(typed) = self.erase_typed {
@@ -186,11 +204,10 @@ impl Driver {
                     self.erased = true;
                     self.last_rule = None;
                     self.note("The Mac's disk is ready. Starting the macOS installer.");
-                    self.press(&["meta_l", "q"]);
                 } else if typed.elapsed() > ERASE_LIMIT {
                     self.stand_down("it could not prepare the Mac's disk");
                 }
-            } else if terminal_open {
+            } else if terminal_in_front {
                 // Terminal shows its window a moment before it takes keys; the first look only notes it.
                 let ready = self.terminal_seen.get_or_insert_with(Instant::now).elapsed() >= LOOK_EVERY;
                 if !ready || self.repeated(Rule::TypeErase) {
@@ -204,9 +221,11 @@ impl Driver {
                 self.type_text(ERASE_COMMAND);
                 self.press(&["ret"]);
                 self.erase_typed = Some(Instant::now());
-            } else if let Some(item) = screen.find_exact("Terminal").into_iter().find(|word| word.y > 30.0) {
+            } else if let Some(item) = screen.find_exact("Terminal").into_iter().find(|word| word.y > MENU_BAR_HEIGHT) {
+                // Either the Terminal item of the open Utilities menu, or the title of a Terminal
+                // window that is not in front; clicking brings Terminal forward both times.
                 self.answer(Rule::ChooseTerminal, screen, item);
-            } else if let Some(menu) = screen.find_exact("Utilities").into_iter().find(|word| word.y < 40.0).filter(|_| main_window) {
+            } else if let Some(menu) = screen.find_exact("Utilities").into_iter().find(|word| word.y < MENU_BAR_HEIGHT).filter(|_| main_window) {
                 self.answer(Rule::OpenUtilitiesMenu, screen, menu);
             } else if self.launch_started.elapsed() > RECOVERY_START_LIMIT {
                 self.stand_down("the installer did not show its first window");
@@ -214,7 +233,8 @@ impl Driver {
             return;
         }
 
-        if terminal_open {
+        if terminal_in_front {
+            // Command+Q is only safe with Terminal in front: in the installer itself it means "quit the installer".
             if !self.repeated(Rule::QuitTerminal) {
                 self.press(&["meta_l", "q"]);
             }
@@ -295,8 +315,17 @@ impl Driver {
         }
     }
 
+    /// Adds a line to `vmconfig\easy-install.log`.
+    fn diary(&self, text: &str) {
+        use std::io::Write;
+        if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(self.vm.config_dir().join("easy-install.log")) {
+            let _ = writeln!(file, "[{:>5} s] {text}", self.started.elapsed().as_secs());
+        }
+    }
+
     /// Counts how often the same rule fired in a row. True means easy install has given up.
     fn repeated(&mut self, rule: Rule) -> bool {
+        self.diary(&format!("rule: {rule:?}"));
         self.repeats = if self.last_rule == Some(rule) { self.repeats + 1 } else { 0 };
         self.last_rule = Some(rule);
         if self.repeats >= REPEAT_LIMIT {

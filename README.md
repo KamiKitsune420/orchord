@@ -88,7 +88,7 @@ responsive; animation is not.
   (`winget install Microsoft.VCRedist.2015+.x64`). Without it Windows says that
   `VCRUNTIME140.dll` was not found.
 - The Apple SMC key: a 64-character string that QEMU's Apple SMC device has to present before
-  macOS will start. Orchord does not come with it.
+  macOS will start. Orchord does not come with it; see "Getting the Apple SMC key" below.
 - A text recognition language installed in Windows, for easy install.
 
 ## Getting started
@@ -98,10 +98,30 @@ responsive; animation is not.
    `orchord.exe`.
 2. Start `orchord.exe`. The first time, it says that it is not fully set up.
 3. Open File, Orchord Settings (Control+Comma). Check the QEMU folder, choose where virtual
-   machines are kept, and enter the Apple SMC key.
+   machines are kept, and enter the Apple SMC key; the next section says how to get it.
 4. Press Control+N to create a Mac.
 
 The settings are kept in `%APPDATA%\orchord\settings.toml`.
+
+## Getting the Apple SMC key
+
+macOS asks the Mac it is starting on for a 64-character key, held in a chip called the SMC,
+and stops if the answer is wrong. QEMU's Apple SMC device gives whatever key it is handed, so
+Orchord has to be told it. The key is the same on every Intel Mac. It is Apple's text, so it
+is not in this repository or in the release. There are two ways to get it:
+
+- **Read it from an Intel Mac.** Gabriel Somlo's page
+  [Running Mac OS X as a QEMU/KVM Guest](https://www.contrib.andrew.cmu.edu/~somlo/OSXKVM/)
+  offers a small program, `SmcDumpKey.c`.
+  Compiled and run on an Intel Mac, it prints the SMC's two values, OSK0 and OSK1; joined
+  together they are the key. Apple silicon Macs have no such chip.
+- **Look it up.** Because it never changes, other projects that run macOS under QEMU carry
+  it in their start-up scripts, on the line containing `isa-applesmc,osk=`:
+  `OpenCore-Boot.sh` in [OSX-KVM](https://github.com/kholia/OSX-KVM) and the `quickemu`
+  script in [quickemu](https://github.com/quickemu-project/quickemu). It reads as an English
+  sentence that ends with Apple's copyright notice.
+
+Enter it in File, Orchord Settings. Orchord refuses anything that is not 64 characters long.
 
 ## Building
 

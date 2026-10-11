@@ -14,3 +14,7 @@ prismer = "0.1.4"
 
 [build-dependencies]
 embed-manifest = "1"
+
+# Text recognition prepares large pictures in plain loops, which are far too slow unoptimised.
+[profile.dev.package.orchord-core]
+opt-level = 2

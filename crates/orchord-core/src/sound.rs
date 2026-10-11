@@ -6,6 +6,8 @@ type Tone = (u32, u32);
 
 /// A Mac was switched on and is starting up: four quick rising notes, the last one held.
 pub const BOOT: &[Tone] = &[(523, 80), (659, 80), (784, 80), (1047, 220)];
+/// macOS finished installing and is waiting to be set up: three bright notes, the last held.
+pub const READY: &[Tone] = &[(784, 120), (988, 120), (1175, 320)];
 /// A Mac restarted and is being started again: two rising notes.
 pub const RESTART: &[Tone] = &[(660, 110), (990, 160)];
 /// macOS itself crashed (a kernel panic): the boot cue backwards, four quick falling notes.

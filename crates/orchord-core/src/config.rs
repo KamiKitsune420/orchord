@@ -26,6 +26,32 @@ pub struct SharedFolder {
     pub enabled: bool,
     /// Defaults to `shared` inside the VM folder when unset.
     pub path: Option<PathBuf>,
+    /// The port the file server listens on. It is chosen the first time the server starts and
+    /// then kept, because the Mac remembers the address it connects to.
+    pub port: Option<u16>,
+}
+
+/// How far the installation of macOS on this Mac has got.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum InstallStage {
+    /// Nothing is on the Mac's disk yet, so it must start from the installer image.
+    NotStarted,
+    /// The installer has copied itself to the Mac's disk and carries on from there.
+    Copied,
+    /// macOS is installed. Also the state of a Mac whose configuration says nothing.
+    #[default]
+    Done,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(default)]
+pub struct Install {
+    pub stage: InstallStage,
+    /// Orchord works the installer itself, up to the first screen where VoiceOver can speak.
+    pub easy: bool,
+    /// The installer image, relative to the VM folder unless absolute.
+    pub media: Option<PathBuf>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -42,6 +68,8 @@ pub struct VmConfig {
     pub shared_folder: SharedFolder,
     #[serde(default = "default_mac_address")]
     pub mac_address: String,
+    #[serde(default)]
+    pub install: Install,
 }
 
 fn default_mac_address() -> String {
@@ -59,6 +87,7 @@ impl VmConfig {
             audio: AudioMode::default(),
             shared_folder: SharedFolder::default(),
             mac_address: default_mac_address(),
+            install: Install::default(),
         }
     }
 }
@@ -109,6 +138,22 @@ impl Vm {
         self.config_dir().join("audio.wav")
     }
 
+    /// Records how far installation has got. The file is read again first, so that settings
+    /// changed in the meantime by another copy of this configuration are not undone.
+    pub fn set_install_stage(&mut self, stage: InstallStage) -> Result<()> {
+        if let Ok(current) = Vm::load(&self.dir) {
+            self.config = current.config;
+        }
+        self.config.install.stage = stage;
+        self.save()
+    }
+
+    /// The installer image to start from, while nothing is on the Mac's disk yet.
+    pub fn install_media_path(&self) -> Option<PathBuf> {
+        let media = self.config.install.media.as_ref().filter(|_| self.config.install.stage == InstallStage::NotStarted)?;
+        Some(if media.is_absolute() { media.clone() } else { self.dir.join(media) })
+    }
+
     pub fn shared_folder_path(&self) -> PathBuf {
         self.config.shared_folder.path.clone().unwrap_or_else(|| self.dir.join("shared"))
     }
@@ -127,11 +172,15 @@ impl Vm {
     }
 }
 
-/// Every virtual machine under `root`, sorted by name. Folders without a readable
-/// configuration are skipped: they are not ours to report on.
-pub fn list_vms(root: &Path) -> Vec<Vm> {
-    let Ok(entries) = std::fs::read_dir(root) else { return Vec::new() };
-    let mut vms: Vec<Vm> = entries.flatten().filter(|e| e.path().is_dir()).filter_map(|e| Vm::load(&e.path()).ok()).collect();
+/// Every virtual machine under `root`, plus those in `elsewhere` (folders the user chose
+/// outside `root`), sorted by name. Folders without a readable configuration are skipped:
+/// they are not ours to report on.
+pub fn list_vms(root: &Path, elsewhere: &[PathBuf]) -> Vec<Vm> {
+    let under_root = std::fs::read_dir(root).into_iter().flatten().flatten().map(|entry| entry.path()).filter(|path| path.is_dir());
+    let mut folders: Vec<PathBuf> = under_root.chain(elsewhere.iter().cloned()).collect();
+    folders.sort();
+    folders.dedup();
+    let mut vms: Vec<Vm> = folders.iter().filter_map(|folder| Vm::load(folder).ok()).collect();
     vms.sort_by_key(|vm| vm.config.name.to_lowercase());
     vms
 }

@@ -7,6 +7,10 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
 
+/// How long a struck key stays down, and how long modifiers are given to register around it.
+const KEY_HOLD: Duration = Duration::from_millis(60);
+const KEY_SETTLE: Duration = Duration::from_millis(20);
+
 /// The largest value of either axis in `QmpClient::pointer_move`.
 pub const POINTER_MAX: u16 = 0x7FFF;
 
@@ -76,9 +80,26 @@ impl QmpClient {
     }
 
     /// Presses and releases a chord of keys, given as QEMU key names such as `meta_l` and `f5`.
+    /// The last key is the one struck; those before it are held around it, like Shift.
+    /// Returns once the keys are up again, a little over a tenth of a second later.
+    ///
+    /// QEMU's own `send-key` command is not used: it queues every press with a delay, and
+    /// text typed faster than the queue drains overflows it, which loses key releases and
+    /// leaves keys stuck down in the Mac.
     pub fn send_keys(&mut self, keys: &[&str]) -> Result<()> {
-        let keys: Vec<Value> = keys.iter().map(|key| json!({ "type": "qcode", "data": key })).collect();
-        self.execute("send-key", Some(json!({ "keys": keys, "hold-time": 120 }))).map(|_| ())
+        let Some((struck, held)) = keys.split_last() else { return Ok(()) };
+        let event = |key: &str, down: bool| json!({ "type": "key", "data": { "down": down, "key": { "type": "qcode", "data": key } } });
+        let mut send = |events: Vec<Value>, pause: Duration| -> Result<()> {
+            if !events.is_empty() {
+                self.execute("input-send-event", Some(json!({ "events": events })))?;
+                std::thread::sleep(pause);
+            }
+            Ok(())
+        };
+        send(held.iter().map(|key| event(key, true)).collect(), KEY_SETTLE)?;
+        send(vec![event(struck, true)], KEY_HOLD)?;
+        send(vec![event(struck, false)], KEY_SETTLE)?;
+        send(held.iter().rev().map(|key| event(key, false)).collect(), KEY_SETTLE)
     }
 
     /// Presses or releases one key, given as a PC scancode with bit 7 set for extended keys

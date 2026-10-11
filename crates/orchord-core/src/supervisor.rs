@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 
-use crate::config::Vm;
+use crate::config::{InstallStage, Vm};
 use crate::qemu::{LaunchOptions, build_args};
 use crate::qmp::QmpClient;
 use crate::settings::AppSettings;
@@ -36,6 +36,9 @@ const POLL_INTERVAL: Duration = Duration::from_millis(500);
 const COMMAND_WAIT: Duration = Duration::from_millis(15);
 /// How long macOS is given to put its power dialog on screen before the answer is typed.
 const POWER_DIALOG_WAIT: Duration = Duration::from_millis(2500);
+/// A Mac disk image this large holds more than a freshly erased disk: the installer has
+/// copied itself there, and the Mac can carry on without the installer image.
+const INSTALLER_COPIED_BYTES: u64 = 6 << 30;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VmEvent {
@@ -48,6 +51,10 @@ pub enum VmEvent {
     /// macOS crashed with a kernel panic and is frozen; the text is the panic's first line.
     /// The Mac stays as it is until the user restarts it or powers it off.
     Crashed(String),
+    /// Installation of macOS reached a new stage; the Mac's configuration file already says so.
+    InstallStage(InstallStage),
+    /// Something easy install wants the user to know, in words.
+    InstallNote(String),
     /// The Mac was suspended by the user and is frozen in memory.
     Suspended,
     Resumed,
@@ -63,7 +70,7 @@ pub enum StopReason {
     Failed(String),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub enum VmCommand {
     /// Power the Mac off immediately, like pulling the plug.
     ForceStop,
@@ -86,6 +93,9 @@ pub enum VmCommand {
     PointerButton { button: PointerButton, down: bool },
     /// Save the Mac's screen to this file as a PPM image.
     Screenshot(PathBuf),
+    /// Run one command of QEMU's machine protocol and send its answer back, for features
+    /// used too rarely to deserve a command of their own, such as USB devices.
+    Qmp { execute: String, arguments: Option<serde_json::Value>, reply: Sender<std::result::Result<serde_json::Value, String>> },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,7 +123,8 @@ impl PointerButton {
 pub struct Supervisor {
     vm: Vm,
     settings: AppSettings,
-    /// Attached for the first launch only; later launches boot from the Mac's own disk.
+    /// An installer image for the first launch only, whatever the Mac's configuration says.
+    /// Without it, a Mac that has nothing installed starts from the image its configuration names.
     pub install_media: Option<PathBuf>,
     pub debug_qmp_port: Option<u16>,
     /// Extra QEMU arguments for experiments; they are added last, so they win.
@@ -160,7 +171,7 @@ impl Supervisor {
         loop {
             launch += 1;
             let _ = events.send(VmEvent::Starting { launch });
-            let options = LaunchOptions { qmp_port: free_port()?, debug_qmp_port: self.debug_qmp_port, install_media: self.install_media.take(), extra_args: self.extra_qemu_args.clone() };
+            let options = LaunchOptions { qmp_port: free_port()?, debug_qmp_port: self.debug_qmp_port, install_media: self.install_media.take().or_else(|| self.vm.install_media_path()), extra_args: self.extra_qemu_args.clone() };
             let mut child = self.spawn(&options)?;
             let started = Instant::now();
             let mut qmp = match QmpClient::connect(options.qmp_port, Duration::from_secs(20)) {
@@ -193,11 +204,21 @@ impl Supervisor {
                     if quick_pauses >= MAX_QUICK_PAUSES {
                         return Ok(StopReason::Failed("The Mac keeps stopping within seconds of starting, so it was not started again.".to_string()));
                     }
+                    self.note_installer_copied(events);
                     restarts += 1;
                     sound::play(sound::RESTART);
                     let _ = events.send(VmEvent::GuestRestart { count: restarts });
                 }
             }
+        }
+    }
+
+    /// After the installer's first stage the Mac restarts to carry on from its own disk.
+    /// From then on the installer image must stay away, or the Mac would start from it again.
+    fn note_installer_copied(&mut self, events: &Sender<VmEvent>) {
+        let disk_bytes = std::fs::metadata(self.vm.disk_path()).map(|disk| disk.len()).unwrap_or(0);
+        if self.vm.config.install.stage == InstallStage::NotStarted && disk_bytes >= INSTALLER_COPIED_BYTES && self.vm.set_install_stage(InstallStage::Copied).is_ok() {
+            let _ = events.send(VmEvent::InstallStage(InstallStage::Copied));
         }
     }
 
@@ -224,7 +245,7 @@ impl Supervisor {
                     VmCommand::ForceStop | VmCommand::Reset => {
                         let _ = qmp.quit();
                         let _ = child.wait();
-                        return Ok(if command == VmCommand::Reset { Outcome::UserReset } else { Outcome::UserStop });
+                        return Ok(if matches!(command, VmCommand::Reset) { Outcome::UserReset } else { Outcome::UserStop });
                     }
                     VmCommand::Suspend if !suspended && qmp.pause().is_ok() => {
                         suspended = true;
@@ -240,7 +261,7 @@ impl Supervisor {
                         // There, Return chooses Shut Down and R chooses Restart.
                         let _ = qmp.send_keys(&["ctrl", "power"]);
                         std::thread::sleep(POWER_DIALOG_WAIT);
-                        let _ = qmp.send_keys(&[if command == VmCommand::AskRestart { "r" } else { "ret" }]);
+                        let _ = qmp.send_keys(&[if matches!(command, VmCommand::AskRestart) { "r" } else { "ret" }]);
                     }
                     VmCommand::SendKeys(keys) => {
                         let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
@@ -254,6 +275,9 @@ impl Supervisor {
                     }
                     VmCommand::PointerButton { button, down } => {
                         let _ = qmp.pointer_button(button.qemu_name(), down);
+                    }
+                    VmCommand::Qmp { execute, arguments, reply } => {
+                        let _ = reply.send(qmp.execute(&execute, arguments).map_err(|error| format!("{error:#}")));
                     }
                     VmCommand::Screenshot(path) => {
                         if qmp.screendump(&path).is_ok() {

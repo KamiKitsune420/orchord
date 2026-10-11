@@ -11,6 +11,11 @@ serde_json = "1"
 toml = "0.8"
 ureq = "2"
 sha2 = "0.10"
+dav-server = { version = "0.11", default-features = false, features = ["localfs"] }
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "macros"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_System_Diagnostics_Debug", "Win32_Foundation"] }
+windows = { version = "0.58", features = ["Foundation", "Foundation_Collections", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage_Streams"] }

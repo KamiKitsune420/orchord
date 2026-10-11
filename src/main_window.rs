@@ -10,14 +10,18 @@
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use orchord_core::config::list_vms;
-use orchord_core::{AppSettings, POINTER_MAX, PointerButton, StopReason, Supervisor, Vm, VmCommand, VmEvent, sound};
+use orchord_core::create::{self, Step};
+use orchord_core::file_server::{self, FileServer};
+use orchord_core::{AppSettings, InstallStage, POINTER_MAX, PointerButton, StopReason, Supervisor, Vm, VmCommand, VmEvent, easy_install, keys, sound};
 use wxdragon::prelude::*;
 use wxdragon::widgets::GenericStaticBitmap;
 
-use crate::{keyboard_capture, settings_dialog, speech};
+use crate::{keyboard_capture, settings_dialog, speech, usb_dialog, wizard};
 
 const ID_NEW_VM: Id = ID_HIGHEST + 1;
 const ID_START: Id = ID_HIGHEST + 2;
@@ -31,6 +35,9 @@ const ID_POWER_SUSPEND: Id = ID_HIGHEST + 12;
 const ID_FORCE_RESTART: Id = ID_HIGHEST + 13;
 const ID_FORCE_OFF: Id = ID_HIGHEST + 14;
 const ID_TOGGLE_LOG: Id = ID_HIGHEST + 15;
+const ID_OPEN_SHARED: Id = ID_HIGHEST + 16;
+const ID_CONNECT_SHARED: Id = ID_HIGHEST + 17;
+const ID_USB: Id = ID_HIGHEST + 18;
 
 const EMPTY_LIST_TEXT: &str = "No virtual machines created yet. To create one, go to File > New Virtual Machine, or press Control plus N.";
 const TICK_MS: i32 = 250;
@@ -64,11 +71,13 @@ struct Row {
     state: RunState,
     events: Option<Receiver<VmEvent>>,
     commands: Option<Sender<VmCommand>>,
+    /// Serves the shared folder while the Mac runs, if the folder is turned on.
+    file_server: Option<FileServer>,
 }
 
 impl Row {
     fn new(vm: Vm) -> Self {
-        Row { vm, state: RunState::Stopped, events: None, commands: None }
+        Row { vm, state: RunState::Stopped, events: None, commands: None, file_server: None }
     }
 
     fn is_active(&self) -> bool {
@@ -76,8 +85,32 @@ impl Row {
     }
 
     fn list_text(&self) -> String {
-        format!("{}, {}, {}", self.vm.config.name, self.vm.config.macos.display_name(), self.state.label())
+        let install = match self.vm.config.install.stage {
+            InstallStage::NotStarted => ", macOS not installed yet",
+            InstallStage::Copied => ", macOS installation not finished",
+            InstallStage::Done => "",
+        };
+        format!("{}, {}, {}{install}", self.vm.config.name, self.vm.config.macos.display_name(), self.state.label())
     }
+
+    /// Whether Orchord itself is working this Mac's installer, so the user's mouse must keep out.
+    fn easy_install_active(&self) -> bool {
+        self.vm.config.install.easy && self.vm.config.install.stage != InstallStage::Done
+    }
+}
+
+/// A virtual machine being created on a background thread, and the dialog showing how far it is.
+struct Creation {
+    name: String,
+    boot_after: bool,
+    messages: Receiver<CreationMessage>,
+    cancel: Arc<AtomicBool>,
+    dialog: ProgressDialog,
+}
+
+enum CreationMessage {
+    Step(Step),
+    Finished(Result<Vm, String>),
 }
 
 struct State {
@@ -93,6 +126,7 @@ struct State {
     last_pointer: Cell<Option<(u16, u16)>>,
     /// The mouse buttons currently held down in the Mac.
     held_buttons: Cell<[bool; 3]>,
+    creation: Option<Creation>,
 }
 
 type Shared = Rc<RefCell<State>>;
@@ -114,8 +148,8 @@ struct Ui {
 
 pub fn show() {
     let settings = AppSettings::load().unwrap_or_default();
-    let rows = list_vms(&settings.vm_root).into_iter().map(Row::new).collect();
-    let state: Shared = Rc::new(RefCell::new(State { settings, rows, console: None, ticks: 0, last_frame: Vec::new(), frame_size: None, last_pointer: Cell::new(None), held_buttons: Cell::new([false; 3]) }));
+    let rows = list_vms(&settings.vm_root, &settings.other_vms).into_iter().map(Row::new).collect();
+    let state: Shared = Rc::new(RefCell::new(State { settings, rows, console: None, ticks: 0, last_frame: Vec::new(), frame_size: None, last_pointer: Cell::new(None), held_buttons: Cell::new([false; 3]), creation: None }));
 
     let frame = Frame::builder().with_title("Orchord").with_size(Size::new(900, 700)).build();
     let panel = Panel::builder(&frame).build();
@@ -158,13 +192,16 @@ pub fn show() {
     {
         let state = state.clone();
         frame.on_menu_selected(move |event| match event.get_id() {
-            ID_NEW_VM => say(frame, "The new virtual machine wizard is not built yet."),
+            ID_NEW_VM => new_vm(ui, &state),
             ID_START => start_selected(ui, &state),
             ID_SETTINGS => edit_selected(ui, &state),
             ID_OPEN_FOLDER => open_selected_folder(ui, &state),
             ID_REFRESH => reload(ui, &state),
             ID_CAPTURE => capture_keyboard(ui, &state),
             ID_TOGGLE_LOG => toggle_log(ui, &state),
+            ID_OPEN_SHARED => open_shared_folder(ui, &state),
+            ID_CONNECT_SHARED => connect_shared_folder(ui, &state),
+            ID_USB => usb_devices(ui, &state),
             ID_POWER_RESTART => power_restart(ui, &state),
             ID_POWER_SHUT_DOWN => power_shut_down(ui, &state),
             ID_POWER_SUSPEND => power_suspend(ui, &state),
@@ -228,10 +265,13 @@ fn build_menu_bar() -> MenuBar {
     let machine = Menu::builder()
         .append_item(ID_START, "&Start\tEnter", "Start the selected virtual machine")
         .append_item(ID_CAPTURE, "Send &Keyboard to the Mac\tCtrl+G", "Send every key to the Mac. Press and release Control and Alt together to get the keyboard back.")
+        .append_item(ID_USB, "&USB Devices...	Ctrl+U", "Connect a USB device plugged into this PC to the Mac, or give one back to Windows")
         .append_item(ID_TOGGLE_LOG, "Switch Between Mac Screen and Status &Log\tCtrl+L", "Show the status log in place of the Mac's screen, or the screen again")
         .append_separator()
         .append_item(ID_SETTINGS, "Se&ttings...\tCtrl+P", "Change the virtual machine's settings")
         .append_item(ID_OPEN_FOLDER, "Open &Folder", "Open the virtual machine's folder in File Explorer")
+        .append_item(ID_OPEN_SHARED, "Open S&hared Folder", "Open the folder shared with the Mac in File Explorer")
+        .append_item(ID_CONNECT_SHARED, "&Connect Shared Folder in the Mac...", "Make the Mac connect the shared folder now and every time you log in to it")
         .append_separator()
         .append_item(ID_FORCE_RESTART, "Force &Restart", "Power the Mac off and on again without shutting macOS down")
         .append_item(ID_FORCE_OFF, "Force Power &Off", "Power the Mac off immediately without shutting macOS down")
@@ -378,14 +418,24 @@ fn start_selected(ui: Ui, state: &Shared) {
     }
     let (event_sender, event_receiver) = mpsc::channel();
     let (command_sender, command_receiver) = mpsc::channel();
-    let supervisor = Supervisor::new(row.vm.clone(), settings);
-    std::thread::spawn(move || supervisor.run(event_sender, command_receiver));
+    let vm = row.vm.clone();
+    if row.easy_install_active() {
+        std::thread::spawn(move || easy_install::run(vm, settings, event_sender, command_receiver));
+    } else {
+        std::thread::spawn(move || Supervisor::new(vm, settings).run(event_sender, command_receiver));
+    }
     row.events = Some(event_receiver);
     row.commands = Some(command_sender);
     row.state = RunState::Starting;
     ui.list.set_string(index as u32, &row.list_text());
     show_console(ui, row);
     log_line(ui, &format!("{} is starting. Press Control+G to send the keyboard to the Mac, Alt+P for the power menu, and Control+L to switch between the Mac's screen and this status log.", row.vm.config.name));
+    start_file_server(ui, row);
+    match (row.vm.config.install.stage, row.vm.config.install.easy) {
+        (InstallStage::Done, _) | (_, true) => {}
+        (InstallStage::NotStarted, false) => log_line(ui, "This Mac has no macOS yet, so it is starting from the installer. When it has started, press Control+G and then Windows+F5, which is Command+F5 on the Mac, to turn VoiceOver on."),
+        (InstallStage::Copied, false) => log_line(ui, "macOS is still installing on this Mac. It restarts by itself a few times."),
+    }
     state.console = Some(index);
     state.last_frame.clear();
     state.frame_size = None;
@@ -476,6 +526,89 @@ fn edit_selected(ui: Ui, state: &Shared) {
     ui.list.set_string(index as u32, &row.list_text());
 }
 
+/// Starts serving the Mac's shared folder, if the user has turned it on in the settings.
+fn start_file_server(ui: Ui, row: &mut Row) {
+    if !row.vm.config.shared_folder.enabled || row.vm.config.install.stage != InstallStage::Done {
+        return;
+    }
+    let folder = row.vm.shared_folder_path();
+    // The port is kept from one run to the next because the Mac remembers the address. If
+    // another program has taken it since, any free port will do and the Mac must connect again.
+    let remembered = row.vm.config.shared_folder.port;
+    let server = FileServer::start(&folder, remembered.unwrap_or(0)).or_else(|_| FileServer::start(&folder, 0));
+    match server {
+        Ok(server) => {
+            if remembered != Some(server.port()) {
+                row.vm.config.shared_folder.port = Some(server.port());
+                let _ = row.vm.save();
+                log_line(ui, "The shared folder has a new address. Choose Connect Shared Folder in the Mac from the Machine menu once the Mac is at its desktop.");
+            }
+            log_line(ui, &format!("The shared folder {} is on. In the Mac it is the {} folder in your home folder, once connected.", folder.display(), file_server::MAC_FOLDER_NAME));
+            row.file_server = Some(server);
+        }
+        Err(error) => log_line(ui, &format!("The shared folder could not be turned on. {error:#}")),
+    }
+}
+
+fn usb_devices(ui: Ui, state: &Shared) {
+    // The dialog runs its own event loop, so the state is let go of before it opens.
+    let Some((_, commands, name)) = running_target(ui, &state.borrow()) else { return };
+    if let Err(problem) = usb_dialog::show(ui.frame, commands, &name) {
+        show_error(ui.frame, &problem);
+    }
+}
+
+fn open_shared_folder(ui: Ui, state: &Shared) {
+    let state = state.borrow();
+    let Some(index) = target_index(ui, &state) else { return };
+    let vm = &state.rows[index].vm;
+    if !vm.config.shared_folder.enabled {
+        say(ui.frame, &format!("{} has no shared folder. Turn it on in Settings, Control+P.", vm.config.name));
+        return;
+    }
+    let folder = vm.shared_folder_path();
+    let _ = std::fs::create_dir_all(&folder);
+    if let Err(error) = std::process::Command::new("explorer.exe").arg(&folder).spawn() {
+        show_error(ui.frame, &format!("File Explorer could not be opened. {error}"));
+    }
+}
+
+/// Types one line into the Mac's Terminal that makes the Mac connect the shared folder now
+/// and at every login. Typing is the only way in: nothing of Orchord's runs inside the Mac.
+fn connect_shared_folder(ui: Ui, state: &Shared) {
+    let (commands, port, name) = {
+        let state = state.borrow();
+        let Some((index, commands, name)) = running_target(ui, &state) else { return };
+        let Some(server) = &state.rows[index].file_server else {
+            say(ui.frame, &format!("{name} has no shared folder running. Turn it on in Settings, Control+P, then start the Mac again."));
+            return;
+        };
+        (commands, server.port(), name)
+    };
+    let question = format!(
+        "Orchord will now type into {name}: it opens Terminal through Spotlight and runs one command, which makes the Mac connect the shared folder now and every time you log in.\n\nBefore you answer, make sure you are logged in to the Mac and it is at its desktop, and do not type while Orchord does. It takes about half a minute.\n\nTo do it by hand instead, press Command+K in the Mac's Finder and connect to {} as a guest.\n\nType into the Mac now?",
+        file_server::mac_url(port)
+    );
+    if !confirm(ui.frame, &question, "Connect Shared Folder") {
+        return;
+    }
+    if keyboard_capture::is_captured() {
+        release_keyboard(ui, &state.borrow());
+    }
+    log_line(ui, "Typing into the Mac. Please wait about half a minute.");
+    std::thread::spawn(move || {
+        // Spotlight, then Terminal, then the command. The pauses give a slow Mac time to keep up.
+        keys::press(&commands, &["meta_l", "spc"]);
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        keys::type_text(&commands, "Terminal");
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        keys::press(&commands, &["ret"]);
+        std::thread::sleep(std::time::Duration::from_secs(8));
+        keys::type_text(&commands, &file_server::setup_command(port));
+        keys::press(&commands, &["ret"]);
+    });
+}
+
 fn open_selected_folder(ui: Ui, state: &Shared) {
     let state = state.borrow();
     let Some(index) = target_index(ui, &state) else { return };
@@ -491,7 +624,7 @@ fn reload(ui: Ui, state: &Shared) {
         return;
     }
     state.settings = AppSettings::load().unwrap_or_default();
-    state.rows = list_vms(&state.settings.vm_root).into_iter().map(Row::new).collect();
+    state.rows = list_vms(&state.settings.vm_root, &state.settings.other_vms).into_iter().map(Row::new).collect();
     fill_list(ui.list, &state);
     report_setup_problems(ui.frame, &state);
 }
@@ -501,7 +634,8 @@ fn reload(ui: Ui, state: &Shared) {
 fn tick(ui: Ui, state: &Shared) {
     let mut notices = Vec::new();
     {
-        let mut state = state.borrow_mut();
+        // A dialog shown from inside a tick keeps the timer running; that inner tick must wait.
+        let Ok(mut state) = state.try_borrow_mut() else { return };
         if keyboard_capture::take_release_request() {
             release_keyboard(ui, &state);
         }
@@ -518,6 +652,105 @@ fn tick(ui: Ui, state: &Shared) {
     // Shown after the borrow ends: a modal dialog runs its own event loop, and the timer may tick inside it.
     for notice in notices {
         show_error(ui.frame, &notice);
+    }
+    pump_creation(ui, state);
+}
+
+/// File > New Virtual Machine: asks the wizard's questions, then builds the Mac in the background.
+fn new_vm(ui: Ui, state: &Shared) {
+    if state.borrow().creation.is_some() {
+        say(ui.frame, "A virtual machine is already being created.");
+        return;
+    }
+    let settings = state.borrow().settings.clone();
+    if let Some(problem) = settings.problems().first() {
+        show_error(ui.frame, &format!("Orchord is not fully set up, so it cannot create a virtual machine yet. {problem}"));
+        return;
+    }
+    let Some(answers) = wizard::run(ui.frame, &settings) else { return };
+    let (sender, messages) = mpsc::channel();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let name = answers.new.name.clone();
+    {
+        let (new, cancel) = (answers.new.clone(), cancel.clone());
+        std::thread::spawn(move || {
+            let steps = sender.clone();
+            let result = create::create(&new, &settings, &mut |step| drop(steps.send(CreationMessage::Step(step))), &cancel);
+            let _ = sender.send(CreationMessage::Finished(result.map_err(|error| format!("{error:#}"))));
+        });
+    }
+    let dialog = ProgressDialog::builder(&ui.frame, &format!("Creating {name}"), "Creating the Mac's disk.", 100).can_abort().build();
+    state.borrow_mut().creation = Some(Creation { name, boot_after: answers.boot_after, messages, cancel, dialog });
+}
+
+/// Carries the creation thread's news to its progress dialog, and finishes up when it is done.
+fn pump_creation(ui: Ui, state: &Shared) {
+    // The creation is taken out of the state while its dialog is touched: updating a progress
+    // dialog lets other events run, and those must find the state free.
+    let Some(creation) = state.try_borrow_mut().ok().and_then(|mut state| state.creation.take()) else { return };
+    let mut finished = None;
+    for message in creation.messages.try_iter() {
+        match message {
+            CreationMessage::Step(step) => {
+                let (percent, text) = creation_progress(&step);
+                creation.dialog.update(percent, Some(&text));
+            }
+            CreationMessage::Finished(result) => finished = Some(result),
+        }
+    }
+    if creation.dialog.was_cancelled() && !creation.cancel.swap(true, Ordering::Relaxed) {
+        creation.dialog.update(0, Some("Cancelling."));
+    }
+    let Some(result) = finished else {
+        state.borrow_mut().creation = Some(creation);
+        return;
+    };
+    creation.dialog.destroy();
+    match result {
+        Ok(vm) => {
+            let boot = creation.boot_after;
+            let index = add_vm(ui, state, vm);
+            say(ui.frame, &format!("{} was created.", creation.name));
+            if let Some(index) = index.filter(|_| boot) {
+                ui.list.set_selection(index as u32, true);
+                start_selected(ui, state);
+            }
+        }
+        Err(_) if creation.cancel.load(Ordering::Relaxed) => say(ui.frame, &format!("Creating {} was cancelled. Nothing was kept.", creation.name)),
+        Err(error) => show_error(ui.frame, &format!("{} could not be created. {error}", creation.name)),
+    }
+}
+
+/// A new Mac joins the list. One outside the usual folder is remembered in the settings file.
+/// Returns its place in the list.
+fn add_vm(ui: Ui, state: &Shared, vm: Vm) -> Option<usize> {
+    let mut state = state.borrow_mut();
+    if vm.dir.parent() != Some(state.settings.vm_root.as_path()) && !state.settings.other_vms.contains(&vm.dir) {
+        state.settings.other_vms.push(vm.dir.clone());
+        if let Err(error) = state.settings.save() {
+            say(ui.frame, &format!("The settings file could not be saved. {error:#}"));
+        }
+    }
+    let folder = vm.dir.clone();
+    state.rows.push(Row::new(vm));
+    state.rows.sort_by_key(|row| row.vm.config.name.to_lowercase());
+    fill_list(ui.list, &state);
+    state.rows.iter().position(|row| row.vm.dir == folder)
+}
+
+/// How far creation is, as a percentage for the progress bar and a sentence for the user.
+fn creation_progress(step: &Step) -> (i32, String) {
+    const MEGABYTE: u64 = 1 << 20;
+    match step {
+        Step::CreatingDisk => (1, "Creating the Mac's disk.".to_string()),
+        Step::Downloading { received, total: Some(total) } if *total > 0 => {
+            // The download is nearly all of the wait, so it gets nearly all of the bar.
+            let percent = 2 + (received * 90 / total) as i32;
+            (percent.min(92), format!("Downloading the macOS installer from Apple: {} of {} megabytes.", received / MEGABYTE, total / MEGABYTE))
+        }
+        Step::Downloading { received, .. } => (2, format!("Downloading the macOS installer from Apple: {} megabytes so far.", received / MEGABYTE)),
+        Step::CheckingDownload => (93, "Checking the downloaded installer.".to_string()),
+        Step::PreparingInstaller => (95, "Preparing the installer for the Mac.".to_string()),
     }
 }
 
@@ -552,6 +785,14 @@ fn pump_events(ui: Ui, state: &mut State, notices: &mut Vec<String>) {
                     log_line(ui, &format!("{name} has crashed. macOS reported: {panic}"));
                     notices.push(format!("{name} has crashed. macOS stopped with a kernel panic and is frozen. Choose Force Restart or Force Power Off from the Machine menu.\n\nmacOS reported: {panic}"));
                 }
+                VmEvent::InstallStage(stage) => {
+                    row.vm.config.install.stage = stage;
+                    if stage == InstallStage::Done {
+                        sound::play(sound::READY);
+                    }
+                    ui.list.set_string(index as u32, &row.list_text());
+                }
+                VmEvent::InstallNote(note) => log_line(ui, &note),
                 VmEvent::Suspended => {
                     row.state = RunState::Suspended;
                     set_suspend_label(ui, true);
@@ -571,6 +812,7 @@ fn pump_events(ui: Ui, state: &mut State, notices: &mut Vec<String>) {
                     row.state = RunState::Stopped;
                     row.events = None;
                     row.commands = None;
+                    row.file_server = None;
                     console_closed |= console == Some(index);
                     match reason {
                         StopReason::GuestShutDown => say(ui.frame, &format!("{name} shut down.")),
@@ -660,6 +902,9 @@ fn pointer_event(ui: Ui, state: &Shared, event: &WindowEventData, action: Pointe
     // A dialog opened from a menu command may still hold the state; the mouse can wait.
     let Ok(state) = state.try_borrow() else { return };
     let Some(row) = state.console.map(|index| &state.rows[index]) else { return };
+    if row.easy_install_active() {
+        return;
+    }
     let (RunState::Running, Some(commands), Some(picture)) = (row.state, &row.commands, state.frame_size) else { return };
     let send_button = |button: PointerButton, down: bool| {
         let _ = commands.send(VmCommand::PointerButton { button, down });

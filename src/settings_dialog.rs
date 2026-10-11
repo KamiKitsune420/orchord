@@ -36,8 +36,24 @@ pub fn edit(parent: Frame, config: &VmConfig, running: bool) -> Option<VmConfig>
     sizer.add(&sound_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 8);
     sizer.add(&sound, 0, SizerFlag::Expand | SizerFlag::All, 8);
 
-    let share = CheckBox::builder(&dialog).with_label("Share a &folder between Windows and this Mac (file server)").with_value(config.shared_folder.enabled).build();
+    let share = CheckBox::builder(&dialog).with_label("Share a &folder between Windows and this Mac, live, while the Mac runs").with_value(config.shared_folder.enabled).build();
     sizer.add(&share, 0, SizerFlag::All, 8);
+
+    let folder_label = StaticText::builder(&dialog).with_label("Shared folder on &Windows (leave empty to use the folder named shared inside the virtual machine's folder):").build();
+    let folder_value = config.shared_folder.path.as_ref().map(|path| path.to_string_lossy().into_owned()).unwrap_or_default();
+    let folder = TextCtrl::builder(&dialog).with_value(&folder_value).build();
+    let folder_browse = Button::builder(&dialog).with_label("&Browse for the shared folder...").build();
+    sizer.add(&folder_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 8);
+    sizer.add(&folder, 0, SizerFlag::Expand | SizerFlag::All, 8);
+    sizer.add(&folder_browse, 0, SizerFlag::All, 8);
+    folder_browse.on_click(move |_| {
+        let chooser = DirDialog::builder(&dialog, "Choose the folder to share with the Mac", &folder.get_value()).build();
+        if chooser.show_modal() == ID_OK {
+            if let Some(path) = chooser.get_path() {
+                folder.set_value(&path);
+            }
+        }
+    });
 
     let buttons = BoxSizer::builder(Orientation::Horizontal).build();
     let ok = Button::builder(&dialog).with_id(ID_OK).with_label("OK").build();
@@ -65,6 +81,9 @@ pub fn edit(parent: Frame, config: &VmConfig, running: bool) -> Option<VmConfig>
             _ => AudioMode::Host,
         };
         changed.shared_folder.enabled = share.get_value();
+        let folder = folder.get_value();
+        let folder = folder.trim().trim_matches('"');
+        changed.shared_folder.path = if folder.is_empty() { None } else { Some(std::path::PathBuf::from(folder)) };
         Some(changed)
     } else {
         None

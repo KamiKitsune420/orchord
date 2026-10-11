@@ -16,6 +16,8 @@ pub struct AppSettings {
     pub vm_root: PathBuf,
     /// The key string QEMU's Apple SMC device must present. Not shipped with orchord.
     pub osk: String,
+    /// Virtual machines the user created somewhere other than under `vm_root`.
+    pub other_vms: Vec<PathBuf>,
 }
 
 impl Default for AppSettings {
@@ -26,6 +28,7 @@ impl Default for AppSettings {
             efi_dir: PathBuf::new(),
             vm_root: documents.join("Orchord Virtual Machines"),
             osk: String::new(),
+            other_vms: Vec::new(),
         }
     }
 }
@@ -55,6 +58,10 @@ impl AppSettings {
             std::fs::create_dir_all(dir)?;
         }
         std::fs::write(&path, toml::to_string_pretty(self)?).with_context(|| format!("writing {}", path.display()))
+    }
+
+    pub fn qemu_img_exe(&self) -> PathBuf {
+        self.qemu_dir.join("qemu-img.exe")
     }
 
     pub fn qemu_exe(&self) -> PathBuf {

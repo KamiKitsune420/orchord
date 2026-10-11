@@ -29,7 +29,10 @@ and adds the window, the installer automation, the speech and the file sharing a
   notices and starts it again.
 - **A shared folder.** A Windows folder appears in the Mac as a network drive, live in both
   directions, with no administrator rights.
-- **USB devices.** A USB device plugged into the PC can be handed to the running Mac.
+- **USB devices.** Control+U lists the USB devices plugged into the PC and asks QEMU to hand
+  one to the running Mac. Windows only lets go of a device when the UsbDk driver is installed,
+  or when the device uses the generic WinUSB driver; otherwise Orchord says so and the device
+  stays with Windows.
 
 ## Keys
 
@@ -61,8 +64,8 @@ responsive; animation is not.
 
 - Windows 10 or 11 on an Intel processor, with the Windows Hypervisor Platform feature on.
 - QEMU 11 or newer (`winget install SoftwareFreedomConservancy.QEMU`).
-- An OpenCore boot folder, and the Apple SMC key string, named in
-  `%APPDATA%\orchord\settings.toml`.
+- The Apple SMC key string, set as `osk` in `%APPDATA%\orchord\settings.toml`. It is not
+  part of this repository.
 - A text recognition language installed in Windows, for easy install.
 
 ## Building
@@ -86,6 +89,8 @@ command line and prints what happens to it.
   keeps a Mac running across restarts, easy install and its text recognition, the installer
   download, the shared-folder server, USB hand-over and the sound cues.
 - `third_party\prism\`: the [Prism](https://github.com/ethindp/prism) speech library.
+- `third_party\opencore\`: the boot folder the Macs start from, built by `orchord-efi` from
+  the official OpenCore release and acidanthera's kernel extensions.
 - `reports\` and `research_notes\`: the research the design rests on, and what was found by
   testing on real hardware.
 
@@ -94,7 +99,8 @@ A virtual machine is one folder named after it, holding `disk\` (the Mac's drive
 
 ## Licences of the parts
 
-Orchord's own code has no licence chosen yet. It uses Prism (MPL-2.0), wxWidgets through
+Orchord's own code has no licence chosen yet. It uses Prism (MPL-2.0), OpenCore, Lilu,
+VirtualSMC and WhateverGreen (BSD-3-Clause), VoodooPS2Controller (GPL-2.0), wxWidgets through
 wxDragon, dav-server (Apache-2.0) and other Rust crates under their own licences. macOS is
 Apple's: its licence allows it only on Apple hardware, and accepting it is each user's own
 decision.

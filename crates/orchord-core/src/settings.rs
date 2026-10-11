@@ -30,9 +30,11 @@ pub struct AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         let documents = std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_default().join("Documents");
+        // The boot folder travels with the program: the build puts it beside the program file.
+        let beside_program = std::env::current_exe().ok().and_then(|program| program.parent().map(|folder| folder.join("opencore"))).unwrap_or_default();
         AppSettings {
             qemu_dir: PathBuf::from(r"C:\Program Files\qemu"),
-            efi_dir: PathBuf::new(),
+            efi_dir: beside_program,
             vm_root: documents.join("Orchord Virtual Machines"),
             osk: String::new(),
             other_vms: Vec::new(),

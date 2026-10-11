@@ -122,6 +122,12 @@ Changes this makes to the recommendations below: test and default to Sequoia 15,
 - **Starting the installer can crash.** One start in about ten died with `AppleAHCIDiskQueueManager::setPowerState ... timed out`; easy install now restarts a Mac that panics while installing.
 - **MSAA is what to check, not UI Automation.** Through UI Automation every wx control shows as a nameless pane. Through MSAA, which is how NVDA reads wx programs, the wizard's fields, boxes and buttons have the right roles and names.
 - **The shared-folder server is `dav-server` on Windows' loopback address.** It answers `OPTIONS` with DAV class 2, which macOS needs before it will mount a server for writing.
+- **The shared folder works on the installed Big Sur.** One typed line, `curl -s 10.0.2.2:<port>/orchord-setup.sh | sh`, installs a launch agent that mounts the folder at `~/Windows` at every login. A file made on Windows was read on the Mac, and a file made on the Mac appeared on Windows, with no `._` companion files left behind.
+- **Typing into the Mac's Terminal must wait for Terminal.** With a fixed pause the first letters of the command were lost. Orchord now waits until text recognition sees Terminal's Shell menu.
+- **Easy install's first stage also passes on Sequoia**, after two fixes: its disk erase needs minutes, and Continue pressed too soon after choosing Reinstall macOS opened Time Machine.
+- **USB hand-over does not work on this PC without another driver.** QEMU lists the PC's five USB devices, and adding a `usb-host` device succeeds, but its `attached` property stays false and Windows keeps the device. Neither UsbDk nor WinUSB is in place here. Installing UsbDk is an administrator-level driver installation and was left as the user's decision.
+- **Suspend and Resume work from the window.** QEMU reported "paused" and then "running".
+- **Orchord's own boot folder works.** Built from the official OpenCore 1.0.8 release, OpenCore's `Sample.plist` plus about thirty settings, and four acidanthera kernel extensions, it booted the installed Big Sur, Monterey (67 seconds to the first set-up screen) and Sequoia (89 seconds). The OSX-KVM configuration in use until now named several files that were never present; OpenCore had been skipping them.
 
 ## Recommendations at a glance
 

@@ -17,7 +17,7 @@ use orchord_core::{AppSettings, POINTER_MAX, PointerButton, StopReason, Supervis
 use wxdragon::prelude::*;
 use wxdragon::widgets::GenericStaticBitmap;
 
-use crate::{keyboard_capture, settings_dialog};
+use crate::{keyboard_capture, settings_dialog, speech};
 
 const ID_NEW_VM: Id = ID_HIGHEST + 1;
 const ID_START: Id = ID_HIGHEST + 2;
@@ -244,9 +244,11 @@ fn build_menu_bar() -> MenuBar {
     MenuBar::builder().append(file, "&File").append(machine, "&Machine").append(power, "&Power").build()
 }
 
-/// Shows a message in the status bar. It is the one place for short, non-urgent feedback.
+/// Shows a message in the status bar and speaks it through the screen reader. It is the one
+/// place for short, non-urgent feedback.
 fn say(frame: Frame, text: &str) {
     frame.set_status_text(text, 0);
+    speech::speak(text, false);
 }
 
 /// Adds a line to the console's status log and repeats it in the status bar. The log is only

@@ -1,0 +1,2 @@
+[env]
+PRISM_LIB_DIR = { value = "third_party/prism/lib", relative = true }

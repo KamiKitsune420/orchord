@@ -47,6 +47,25 @@ impl MacosVersion {
         }
     }
 
+    /// The Mac logic-board identifier Apple's recovery server is asked with; it decides
+    /// which version's installer the server hands out.
+    pub fn board_id(self) -> &'static str {
+        match self {
+            MacosVersion::BigSur => "Mac-2BD1B31983FE1663",
+            MacosVersion::Monterey => "Mac-E43C1C25D4880AD6",
+            MacosVersion::Sequoia => "Mac-7BA5B2D9E42DDD94",
+        }
+    }
+
+    /// The name the installer gives the system it installs, as shown on its screens.
+    pub fn short_name(self) -> &'static str {
+        match self {
+            MacosVersion::BigSur => "Big Sur",
+            MacosVersion::Monterey => "Monterey",
+            MacosVersion::Sequoia => "Sequoia",
+        }
+    }
+
     /// Whether VoiceOver can speak inside this version's installer (Recovery).
     /// Monterey's Recovery image cannot start VoiceOver at all.
     pub fn installer_speaks(self) -> bool {

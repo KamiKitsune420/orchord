@@ -8,6 +8,7 @@ pub mod config;
 pub mod macos;
 pub mod qemu;
 pub mod qmp;
+pub mod recovery;
 pub mod settings;
 pub mod sound;
 pub mod supervisor;

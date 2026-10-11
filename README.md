@@ -98,7 +98,8 @@ responsive; animation is not.
    `orchord.exe`.
 2. Start `orchord.exe`. The first time, it says that it is not fully set up.
 3. Open File, Orchord Settings (Control+Comma). Check the QEMU folder, choose where virtual
-   machines are kept, and enter the Apple SMC key; the next section says how to get it.
+   machines are kept, and press "Get the key from the internet" for the Apple SMC key; the
+   next section says what that does and what else you can do.
 4. Press Control+N to create a Mac.
 
 The settings are kept in `%APPDATA%\orchord\settings.toml`.
@@ -108,20 +109,27 @@ The settings are kept in `%APPDATA%\orchord\settings.toml`.
 macOS asks the Mac it is starting on for a 64-character key, held in a chip called the SMC,
 and stops if the answer is wrong. QEMU's Apple SMC device gives whatever key it is handed, so
 Orchord has to be told it. The key is the same on every Intel Mac. It is Apple's text, so it
-is not in this repository or in the release. There are two ways to get it:
+is not in this repository or in the release. There are three ways to get it:
 
+- **Let Orchord fetch it.** In File, Orchord Settings, press "Get the key from the
+  internet". After asking you, Orchord downloads a public start-up script of the OSX-KVM
+  project from GitHub (or quickemu's, if that fails), takes the key out of it and puts it in
+  the key field. Nothing about you or your PC is sent. Orchord knows the key's fingerprint,
+  not the key, so it can tell that what it found is right.
 - **Read it from an Intel Mac.** Gabriel Somlo's page
   [Running Mac OS X as a QEMU/KVM Guest](https://www.contrib.andrew.cmu.edu/~somlo/OSXKVM/)
   offers a small program, `SmcDumpKey.c`.
   Compiled and run on an Intel Mac, it prints the SMC's two values, OSK0 and OSK1; joined
   together they are the key. Apple silicon Macs have no such chip.
 - **Look it up.** Because it never changes, other projects that run macOS under QEMU carry
-  it in their start-up scripts, on the line containing `isa-applesmc,osk=`:
-  `OpenCore-Boot.sh` in [OSX-KVM](https://github.com/kholia/OSX-KVM) and the `quickemu`
-  script in [quickemu](https://github.com/quickemu-project/quickemu). It reads as an English
-  sentence that ends with Apple's copyright notice.
+  it in their start-up scripts. In `OpenCore-Boot.sh` of
+  [OSX-KVM](https://github.com/kholia/OSX-KVM) it is on the line containing
+  `isa-applesmc,osk=`, and reads as an English sentence that ends with Apple's copyright
+  notice. [quickemu](https://github.com/quickemu-project/quickemu) has it too, but with its
+  letters scrambled, so that one is no use for reading by hand.
 
-Enter it in File, Orchord Settings. Orchord refuses anything that is not 64 characters long.
+Enter it in File, Orchord Settings. Orchord refuses anything that is not 64 characters long,
+and asks before saving 64 characters that are not the key.
 
 ## Building
 

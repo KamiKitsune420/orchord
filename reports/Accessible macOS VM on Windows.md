@@ -157,6 +157,7 @@ Tested with `MacOSBigSur.iso`, a 13.2 GB full installer of Big Sur 11.2 that was
 - **Shut Down from the Power menu does nothing at macOS's first set-up screen.** The Mac was still running 75 seconds later; Force Power Off stopped it.
 - **VoodooPS2Controller's licence was misdescribed.** Its repository's licence file is the Apple Public Source License 2.0, not GPL-2.0; the VoodooInput it carries is GPL-2.0. The licence texts of every bundled part are now in the repository and in the zip.
 - **Before the repository was made public its whole history was searched.** The Apple SMC key, the owner's email address and access tokens appear nowhere in it; commits carry GitHub's no-reply address.
+- **Orchord can fetch the Apple SMC key when asked.** A button in Orchord Settings downloads OSX-KVM's `OpenCore-Boot.sh` (or the `quickemu` script) from GitHub and takes the key from it. Orchord carries the key's SHA-256 fingerprint, not the key, and tries every run of 64 characters in the file against it, plain and with letters turned by thirteen places; that matters because quickemu stores the key in ROT13. Both sources were tried and both gave the key already in use on the test PC. The same fingerprint lets the dialog ask before saving 64 characters that are not the key. This lowers the project's exposure compared with shipping Apple's text, but it is not a legal guarantee: the program still obtains and uses the key.
 
 ## Recommendations at a glance
 

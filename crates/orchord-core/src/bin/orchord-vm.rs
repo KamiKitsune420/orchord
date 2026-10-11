@@ -4,6 +4,7 @@
 //!   orchord-vm <vm-folder> [--debug-qmp <port>] [--install-media <image>] [--qemu-arg <argument>]...
 //!   orchord-vm new <name> <location> <big-sur|monterey|sequoia> <apple|installer-file> [--easy]
 //!   orchord-vm read <screen.ppm>      prints the text recognised on a picture of a Mac's screen
+//!   orchord-vm smc-key                says whether each public source still holds the Apple SMC key
 //!
 //! A Mac set up for easy install whose macOS is not installed yet is run through easy install,
 //! exactly as the window does it.
@@ -30,6 +31,16 @@ fn main() -> Result<()> {
         let picture = args.next().context("read needs a picture file")?;
         for line in orchord_core::ocr::read_ppm(&PathBuf::from(picture))?.lines {
             println!("{}", line.words.iter().map(|word| format!("{}@{:.0},{:.0}", word.text, word.x, word.y)).collect::<Vec<_>>().join("  "));
+        }
+        return Ok(());
+    }
+    if first == "smc-key" {
+        // Says whether each source still holds the key, without printing the key.
+        for source in &orchord_core::smc_key::SOURCES {
+            match orchord_core::smc_key::fetch_from(source) {
+                Ok(key) => println!("{}: holds the key ({} characters, fingerprint matches)", source.project, key.len()),
+                Err(error) => println!("{}: {error:#}", source.project),
+            }
         }
         return Ok(());
     }

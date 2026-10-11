@@ -6,11 +6,12 @@
 
 use std::path::PathBuf;
 
+use orchord_core::smc_key::{self, KEY_LENGTH};
 use orchord_core::AppSettings;
 use wxdragon::prelude::*;
 
-/// QEMU's Apple SMC device refuses a key of any other length.
-const KEY_LENGTH: usize = 64;
+use crate::speech;
+
 const TITLE: &str = "Orchord Settings";
 
 /// Shows the dialog and returns the changed settings, or `None` if the user cancelled.
@@ -34,8 +35,10 @@ pub fn edit(parent: Frame, settings: &AppSettings) -> Option<AppSettings> {
 
     let key_label = StaticText::builder(&dialog).with_label("Apple SMC &key (64 characters; Orchord does not come with it):").build();
     let key = TextCtrl::builder(&dialog).with_value(&settings.osk).build();
+    let key_fetch = Button::builder(&dialog).with_label("&Get the key from the internet...").build();
     sizer.add(&key_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 8);
     sizer.add(&key, 0, SizerFlag::Expand | SizerFlag::All, 8);
+    sizer.add(&key_fetch, 0, SizerFlag::All, 8);
 
     let buttons = BoxSizer::builder(Orientation::Horizontal).build();
     let ok = Button::builder(&dialog).with_label("OK").build();
@@ -48,6 +51,7 @@ pub fn edit(parent: Frame, settings: &AppSettings) -> Option<AppSettings> {
 
     qemu_browse.on_click(move |_| browse(dialog, "Choose the folder QEMU is installed in", qemu));
     root_browse.on_click(move |_| browse(dialog, "Choose the folder to keep virtual machines in", root));
+    key_fetch.on_click(move |_| fetch_key(dialog, key));
     // OK only closes the dialog when everything in it can be used; otherwise it says what is wrong.
     let collect = {
         let settings = settings.clone();
@@ -59,6 +63,9 @@ pub fn edit(parent: Frame, settings: &AppSettings) -> Option<AppSettings> {
             Some(problem) => {
                 MessageDialog::builder(&dialog, &problem, TITLE).with_style(MessageDialogStyle::OK | MessageDialogStyle::IconWarning).build().show_modal();
             }
+            // A key of the right length with one letter wrong would only show itself much
+            // later, as a Mac that never starts and says nothing.
+            None if !smc_key::is_genuine(&collect().osk) && !confirm(dialog, "What is entered is 64 characters long, but it is not the Apple SMC key: at least one character differs. macOS will not start with a wrong key. Save it anyway?") => {}
             None => dialog.end_modal(ID_OK),
         });
     }
@@ -80,6 +87,36 @@ fn browse(dialog: Dialog, message: &str, field: TextCtrl) {
             field.set_value(&folder);
         }
     }
+}
+
+/// Downloads a public start-up script of another project and takes the key from it. The user
+/// is told what will happen and where the key comes from, and decides; nothing is fetched
+/// before that.
+fn fetch_key(dialog: Dialog, field: TextCtrl) {
+    let sources = smc_key::SOURCES.iter().map(|source| source.project).collect::<Vec<_>>().join(" or ");
+    let question = format!("Orchord will download a public file of the {sources} project from GitHub and take the Apple SMC key from it. Nothing about you or this PC is sent. The key is Apple's text and is not part of Orchord; using it, like accepting Apple's licence for macOS, is your own decision. Get the key now?");
+    if !confirm(dialog, &question) {
+        return;
+    }
+    speech::speak("Getting the key.", true);
+    let cursor = BusyCursor::new(None);
+    let result = smc_key::fetch();
+    drop(cursor);
+    match result {
+        Ok((key, source)) => {
+            field.set_value(&key);
+            field.set_focus();
+            speech::speak(&format!("The key was found in the {} project's file and has been entered. Press OK to save it.", source.project), true);
+        }
+        Err(error) => {
+            let message = format!("{error:#} Check the internet connection and try again, or get the key another way: Orchord's README has a section called Getting the Apple SMC key.");
+            MessageDialog::builder(&dialog, &message, TITLE).with_style(MessageDialogStyle::OK | MessageDialogStyle::IconWarning).build().show_modal();
+        }
+    }
+}
+
+fn confirm(dialog: Dialog, question: &str) -> bool {
+    MessageDialog::builder(&dialog, question, TITLE).with_style(MessageDialogStyle::YesNo | MessageDialogStyle::IconQuestion).build().show_modal() == ID_YES
 }
 
 fn path_in(field: TextCtrl) -> PathBuf {

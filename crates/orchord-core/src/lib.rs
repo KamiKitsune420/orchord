@@ -17,6 +17,7 @@ pub mod qemu;
 pub mod qmp;
 pub mod recovery;
 pub mod settings;
+pub mod smc_key;
 pub mod sound;
 pub mod supervisor;
 pub mod usb;

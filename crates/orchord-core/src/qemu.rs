@@ -48,10 +48,10 @@ pub fn build_args(vm: &Vm, settings: &AppSettings, options: &LaunchOptions) -> V
         args.push(value);
     };
 
-    arg("-accel", "whpx".into());
+    arg("-accel", settings.accelerator());
     arg("-machine", "q35".into());
     arg("-m", config.memory_mb.to_string());
-    arg("-cpu", format!("{},{}", config.macos.cpu_model(), CPU_FLAGS));
+    arg("-cpu", format!("{},{}", crate::host::guest_cpu(config.macos.cpu_model(), &crate::host::cpu_vendor()), CPU_FLAGS));
     arg("-smp", format!("{0},sockets={0},cores=1,threads=1", config.cpus));
 
     arg("-device", "qemu-xhci,id=xhci".into());
@@ -132,7 +132,8 @@ mod tests {
     fn sequoia_gets_a_cpu_model_with_avx2() {
         let (vm, settings) = sample(MacosVersion::Sequoia);
         let line = joined(&build_args(&vm, &settings, &LaunchOptions::default()));
-        assert!(line.contains("-cpu Skylake-Client,-hle,-rtm,vendor=GenuineIntel"), "{line}");
+        // What follows the model depends on who made the processor the test runs on.
+        assert!(line.contains("-cpu Skylake-Client,-hle,-rtm,") && line.contains(",vendor=GenuineIntel,"), "{line}");
     }
 
     #[test]

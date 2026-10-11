@@ -13,16 +13,16 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use orchord_core::config::list_vms;
 use orchord_core::create::{self, Step};
 use orchord_core::file_server::{self, FileServer};
-use orchord_core::{AppSettings, InstallStage, POINTER_MAX, PointerButton, StopReason, Supervisor, Vm, VmCommand, VmEvent, easy_install, keys, ocr, sound};
+use orchord_core::{AppSettings, Appearance, InstallStage, POINTER_MAX, PointerButton, StopReason, Supervisor, Vm, VmCommand, VmEvent, diagnostics, easy_install, keys, ocr, sound, update};
 use wxdragon::prelude::*;
 use wxdragon::widgets::GenericStaticBitmap;
 
-use crate::{keyboard_capture, program_settings, settings_dialog, speech, usb_dialog, wizard};
+use crate::{busy, keyboard_capture, program_settings, settings_dialog, speech, updater, usb_dialog, wizard};
 
 const ID_NEW_VM: Id = ID_HIGHEST + 1;
 const ID_START: Id = ID_HIGHEST + 2;
@@ -41,6 +41,10 @@ const ID_CONNECT_SHARED: Id = ID_HIGHEST + 17;
 const ID_USB: Id = ID_HIGHEST + 18;
 const ID_RIGHT_CONTROL: Id = ID_HIGHEST + 19;
 const ID_PROGRAM_SETTINGS: Id = ID_HIGHEST + 20;
+const ID_CHECK_UPDATES: Id = ID_HIGHEST + 21;
+const ID_FULL_SCREEN: Id = ID_HIGHEST + 22;
+const ID_DELETE: Id = ID_HIGHEST + 23;
+const ID_DIAGNOSTICS: Id = ID_HIGHEST + 24;
 /// Added to every message about Orchord not being set up, so the user knows where to fix it.
 const SETTINGS_HINT: &str = "Open Orchord Settings in the File menu, or press Control+Comma.";
 
@@ -111,6 +115,45 @@ struct Creation {
     messages: Receiver<CreationMessage>,
     cancel: Arc<AtomicBool>,
     dialog: ProgressDialog,
+    shown: Option<Shown>,
+}
+
+/// What the creation dialog last showed, and when.
+struct Shown {
+    step: std::mem::Discriminant<Step>,
+    percent: i32,
+    bar_at: Instant,
+    text_at: Instant,
+}
+
+/// The creation dialog's bar moves at most this often, and its words change at most this
+/// often while one step lasts. Every change is an event the screen reader has to deal with;
+/// a download that reported each megabyte sent it dozens a second, and it froze.
+const PROGRESS_BAR_EVERY: Duration = Duration::from_secs(1);
+const PROGRESS_TEXT_EVERY: Duration = Duration::from_secs(10);
+
+impl Creation {
+    fn show(&mut self, step: &Step) {
+        let (percent, text) = creation_progress(step);
+        let (kind, now) = (std::mem::discriminant(step), Instant::now());
+        match &mut self.shown {
+            Some(shown) if shown.step == kind => {
+                if now.duration_since(shown.text_at) >= PROGRESS_TEXT_EVERY {
+                    self.dialog.update(percent, Some(&text));
+                    (shown.percent, shown.bar_at, shown.text_at) = (percent, now, now);
+                } else if percent != shown.percent && now.duration_since(shown.bar_at) >= PROGRESS_BAR_EVERY {
+                    self.dialog.update(percent, None);
+                    (shown.percent, shown.bar_at) = (percent, now);
+                } else {
+                    self.dialog.update(shown.percent, None);
+                }
+            }
+            _ => {
+                self.dialog.update(percent, Some(&text));
+                self.shown = Some(Shown { step: kind, percent, bar_at: now, text_at: now });
+            }
+        }
+    }
 }
 
 enum CreationMessage {
@@ -132,6 +175,11 @@ struct State {
     /// The mouse buttons currently held down in the Mac.
     held_buttons: Cell<[bool; 3]>,
     creation: Option<Creation>,
+    /// Where word of a newer version arrives, if Orchord asked when it started.
+    update_news: Option<Receiver<update::Release>>,
+    /// Lines for the status log from work done on other threads, and the end they are sent from.
+    notes: Receiver<String>,
+    note_sender: Sender<String>,
 }
 
 type Shared = Rc<RefCell<State>>;
@@ -153,8 +201,20 @@ struct Ui {
 
 pub fn show() {
     let settings = AppSettings::load().unwrap_or_default();
+    // Light or dark has to be chosen before the first window exists.
+    wxdragon::app::set_appearance(match settings.appearance {
+        Appearance::System => wxdragon::appearance::Appearance::System,
+        Appearance::Light => wxdragon::appearance::Appearance::Light,
+        Appearance::Dark => wxdragon::appearance::Appearance::Dark,
+    });
+    // An update leaves the files it replaced behind, because the program they belonged to was running.
+    if let Ok(folder) = update::program_folder() {
+        update::remove_leftovers(&folder);
+    }
+    let update_news = settings.check_for_updates.then(updater::check_in_background);
     let rows = list_vms(&settings.vm_root, &settings.other_vms).into_iter().map(Row::new).collect();
-    let state: Shared = Rc::new(RefCell::new(State { settings, rows, console: None, ticks: 0, last_frame: Vec::new(), frame_size: None, last_pointer: Cell::new(None), held_buttons: Cell::new([false; 3]), creation: None }));
+    let (note_sender, notes) = mpsc::channel();
+    let state: Shared = Rc::new(RefCell::new(State { settings, rows, console: None, ticks: 0, last_frame: Vec::new(), frame_size: None, last_pointer: Cell::new(None), held_buttons: Cell::new([false; 3]), creation: None, update_news, notes, note_sender }));
 
     let frame = Frame::builder().with_title("Orchord").with_size(Size::new(900, 700)).build();
     let panel = Panel::builder(&frame).build();
@@ -210,6 +270,10 @@ pub fn show() {
             ID_OPEN_FOLDER => open_selected_folder(ui, &state),
             ID_REFRESH => reload(ui, &state),
             ID_PROGRAM_SETTINGS => program_settings(ui, &state),
+            ID_CHECK_UPDATES => check_for_updates(ui, &state),
+            ID_FULL_SCREEN => toggle_full_screen(ui),
+            ID_DELETE => delete_selected(ui, &state),
+            ID_DIAGNOSTICS => save_diagnostics(ui, &state),
             ID_CAPTURE => capture_keyboard(ui, &state),
             ID_TOGGLE_LOG => toggle_log(ui, &state),
             ID_OPEN_SHARED => open_shared_folder(ui, &state),
@@ -274,6 +338,7 @@ fn build_menu_bar() -> MenuBar {
         .append_item(ID_NEW_VM, "&New Virtual Machine...\tCtrl+N", "Create a new virtual machine")
         .append_item(ID_REFRESH, "&Refresh List\tF5", "Read the list of virtual machines again")
         .append_item(ID_PROGRAM_SETTINGS, "&Orchord Settings...\tCtrl+,", "Where QEMU is installed, where virtual machines are kept, and the Apple SMC key")
+        .append_item(ID_CHECK_UPDATES, "Check for &Updates...", "See whether a newer version of Orchord has been published, and install it")
         .append_separator()
         .append_item(ID_EXIT, "E&xit\tAlt+F4", "Close Orchord")
         .build();
@@ -283,14 +348,18 @@ fn build_menu_bar() -> MenuBar {
         .append_check_item(ID_RIGHT_CONTROL, "Right Control Works as Co&mmand", "While the keyboard is captured, Right Control and the Menu key act as the Mac's Command key, so that Command+L can be typed")
         .append_item(ID_USB, "&USB Devices...	Ctrl+U", "Connect a USB device plugged into this PC to the Mac, or give one back to Windows")
         .append_item(ID_TOGGLE_LOG, "Switch Between Mac Screen and Status &Log\tCtrl+L", "Show the status log in place of the Mac's screen, or the screen again")
+        .append_item(ID_FULL_SCREEN, "Full Scr&een\tF11", "Let the window fill the whole screen, without its title, menus and status line, or bring them back")
         .append_separator()
         .append_item(ID_SETTINGS, "Se&ttings...\tCtrl+P", "Change the virtual machine's settings")
         .append_item(ID_OPEN_FOLDER, "Open &Folder", "Open the virtual machine's folder in File Explorer")
         .append_item(ID_OPEN_SHARED, "Open S&hared Folder", "Open the folder shared with the Mac in File Explorer")
         .append_item(ID_CONNECT_SHARED, "&Connect Shared Folder in the Mac...", "Make the Mac connect the shared folder now and every time you log in to it")
+        .append_item(ID_DIAGNOSTICS, "Save Dia&gnostic Report", "Write a report about a virtual machine that will not start, to send to someone who can help")
         .append_separator()
         .append_item(ID_FORCE_RESTART, "Force &Restart", "Power the Mac off and on again without shutting macOS down")
         .append_item(ID_FORCE_OFF, "Force Power &Off", "Power the Mac off immediately without shutting macOS down")
+        .append_separator()
+        .append_item(ID_DELETE, "&Delete...\tDel", "Delete the selected virtual machine and its disk from this PC")
         .build();
     let power = Menu::builder()
         .append_item(ID_POWER_RESTART, "&Restart", "Ask macOS to restart")
@@ -427,6 +496,7 @@ fn start_selected(ui: Ui, state: &Shared) {
     let mut state = state.borrow_mut();
     let Some(index) = target_index(ui, &state) else { return };
     let settings = state.settings.clone();
+    let notes = state.note_sender.clone();
     let row = &mut state.rows[index];
     if row.is_active() {
         say(ui.frame, &format!("{} is already {}.", row.vm.config.name, row.state.label()));
@@ -447,9 +517,12 @@ fn start_selected(ui: Ui, state: &Shared) {
     show_console(ui, row);
     log_line(ui, &format!("{} is starting. Press Control+G to send the keyboard to the Mac, Alt+P for the power menu, and Control+L to switch between the Mac's screen and this status log.", row.vm.config.name));
     start_file_server(ui, row);
-    for cleaner in orchord_core::host::memory_cleaners_running() {
-        log_line(ui, &format!("Warning: {cleaner} is running on this PC. Memory cleaners take a running Mac's memory away and can stall it for a long time. Close {cleaner} while the Mac runs."));
-    }
+    // Listing the PC's running programs can take a second, so it is not done on the window's thread.
+    std::thread::spawn(move || {
+        for cleaner in orchord_core::host::memory_cleaners_running() {
+            let _ = notes.send(format!("Warning: {cleaner} is running on this PC. Memory cleaners take a running Mac's memory away and can stall it for a long time. Close {cleaner} while the Mac runs."));
+        }
+    });
     match (row.vm.config.install.stage, row.vm.config.install.easy) {
         (InstallStage::Done, _) | (_, true) => {}
         (InstallStage::NotStarted, false) => log_line(ui, "This Mac has no macOS yet, so it is starting from the installer. When it has started, press Control+G and then Windows+F5, which is Command+F5 on the Mac, to turn VoiceOver on."),
@@ -674,6 +747,7 @@ fn program_settings(ui: Ui, state: &Shared) {
     }
     let mut state = state.borrow_mut();
     let moved = changed.vm_root != state.settings.vm_root;
+    let restyled = changed.appearance != state.settings.appearance;
     state.settings = changed;
     if moved && state.rows.iter().any(Row::is_active) {
         say(ui.frame, "Settings saved. The list will show the new folder's virtual machines once the running one has stopped and you press F5.");
@@ -685,7 +759,95 @@ fn program_settings(ui: Ui, state: &Shared) {
     }
     match state.settings.problems().first() {
         Some(problem) => say(ui.frame, &format!("Settings saved, but Orchord is still not fully set up. {problem}")),
+        None if restyled => say(ui.frame, "Settings saved. The new appearance is used when Orchord next starts."),
         None => say(ui.frame, "Settings saved."),
+    }
+}
+
+/// File > Check for Updates.
+fn check_for_updates(ui: Ui, state: &Shared) {
+    let running = state.borrow().rows.iter().any(Row::is_active);
+    // The dialogs run their own event loops, in which the timer ticks; nothing stays borrowed.
+    if updater::check_now(ui.frame, running) {
+        ui.frame.close(true);
+    }
+}
+
+/// Machine > Full Screen (F11). While the keyboard is sent to the Mac, F11 goes to the Mac.
+fn toggle_full_screen(ui: Ui) {
+    let full = !ui.frame.is_full_screen();
+    ui.frame.show_full_screen(full);
+    // The status line is hidden in full screen, so this is only heard, not seen.
+    say(ui.frame, if full { "Full screen. Press F11 to leave it." } else { "Full screen off." });
+}
+
+/// Machine > Delete (the Delete key). Asks first, with No as the answer Enter gives.
+fn delete_selected(ui: Ui, state: &Shared) {
+    let (name, dir, size) = {
+        let state = state.borrow();
+        let Some(index) = target_index(ui, &state) else { return };
+        let row = &state.rows[index];
+        if row.is_active() {
+            say(ui.frame, &format!("{} is running. Shut it down or power it off before deleting it.", row.vm.config.name));
+            return;
+        }
+        (row.vm.config.name.clone(), row.vm.dir.clone(), size_text(row.vm.disk_bytes()))
+    };
+    let question = format!("Delete the virtual machine {name}? Its disk, {size}, and its settings will be removed from this PC for good. This cannot be undone.");
+    // wxWidgets' "No is the default button" flag, which the wx bindings do not name. With it,
+    // Delete followed by Enter keeps the Mac.
+    const NO_IS_DEFAULT: i64 = 0x80;
+    let style = MessageDialogStyle::YesNo | MessageDialogStyle::from_bits_retain(NO_IS_DEFAULT) | MessageDialogStyle::IconWarning;
+    if MessageDialog::builder(&ui.frame, &question, "Delete Virtual Machine").with_style(style).build().show_modal() != ID_YES {
+        return;
+    }
+    let mut state = state.borrow_mut();
+    // The list may have changed while the question was up; the Mac is found again by its folder.
+    let Some(index) = state.rows.iter().position(|row| row.vm.dir == dir && !row.is_active()) else { return };
+    match state.rows[index].vm.delete() {
+        Ok(left) => {
+            state.rows.remove(index);
+            if let Some(place) = state.settings.other_vms.iter().position(|other| *other == dir) {
+                state.settings.other_vms.remove(place);
+                let _ = state.settings.save();
+            }
+            fill_list(ui.list, &state);
+            ui.list.set_focus();
+            match left {
+                0 => say(ui.frame, &format!("{name} was deleted.")),
+                1 => say(ui.frame, &format!("{name} was deleted. One other item in its folder, such as the shared folder, is not Orchord's and was left in {}.", dir.display())),
+                left => say(ui.frame, &format!("{name} was deleted. {left} other items in its folder are not Orchord's and were left in {}.", dir.display())),
+            }
+        }
+        Err(error) => show_error(ui.frame, &format!("{name} could not be deleted completely. {error:#}")),
+    }
+}
+
+/// A file size the way people say it.
+fn size_text(bytes: u64) -> String {
+    const GIGABYTE: u64 = 1 << 30;
+    const MEGABYTE: u64 = 1 << 20;
+    match bytes {
+        bytes if bytes >= GIGABYTE => format!("{:.1} gigabytes", bytes as f64 / GIGABYTE as f64),
+        bytes if bytes <= MEGABYTE => "less than a megabyte".to_string(),
+        bytes => format!("{} megabytes", bytes.div_ceil(MEGABYTE)),
+    }
+}
+
+/// Machine > Save Diagnostic Report: everything someone helping from afar would ask for.
+fn save_diagnostics(ui: Ui, state: &Shared) {
+    let (vm, settings) = {
+        let state = state.borrow();
+        let Some(index) = target_index(ui, &state) else { return };
+        (state.rows[index].vm.clone(), state.settings.clone())
+    };
+    match busy::wait(&ui.frame, "Writing the diagnostic report.", move || diagnostics::save(&vm, &settings)) {
+        Ok(path) => {
+            // File Explorer opens with the report selected, ready to be sent or copied.
+            let _ = std::process::Command::new("explorer.exe").arg(format!("/select,{}", path.display())).spawn();
+            say(ui.frame, &format!("The diagnostic report was saved as {} and is selected in File Explorer. It does not hold the Apple SMC key.", path.display()));
+        }
+        Err(error) => show_error(ui.frame, &format!("The diagnostic report could not be written. {error:#}")),
     }
 }
 
@@ -712,6 +874,14 @@ fn tick(ui: Ui, state: &Shared) {
             release_keyboard(ui, &state);
         }
         pump_events(ui, &mut state, &mut notices);
+        for note in state.notes.try_iter().collect::<Vec<_>>() {
+            log_line(ui, &note);
+        }
+        // The answer to the question asked of GitHub when Orchord started, if there is news.
+        if let Some(release) = state.update_news.as_ref().and_then(|news| news.try_recv().ok()) {
+            state.update_news = None;
+            say(ui.frame, &format!("Orchord {} is available. Choose Check for Updates in the File menu to install it.", release.version));
+        }
         state.ticks = state.ticks.wrapping_add(1);
         if state.ticks % SCREEN_EVERY_TICKS == 0 {
             if let Some(row) = state.console.map(|index| &state.rows[index]) {
@@ -752,22 +922,30 @@ fn new_vm(ui: Ui, state: &Shared) {
         });
     }
     let dialog = ProgressDialog::builder(&ui.frame, &format!("Creating {name}"), "Creating the Mac's disk.", 100).can_abort().build();
-    state.borrow_mut().creation = Some(Creation { name, boot_after: answers.boot_after, messages, cancel, dialog });
+    state.borrow_mut().creation = Some(Creation { name, boot_after: answers.boot_after, messages, cancel, dialog, shown: None });
 }
 
 /// Carries the creation thread's news to its progress dialog, and finishes up when it is done.
 fn pump_creation(ui: Ui, state: &Shared) {
     // The creation is taken out of the state while its dialog is touched: updating a progress
     // dialog lets other events run, and those must find the state free.
-    let Some(creation) = state.try_borrow_mut().ok().and_then(|mut state| state.creation.take()) else { return };
+    let Some(mut creation) = state.try_borrow_mut().ok().and_then(|mut state| state.creation.take()) else { return };
     let mut finished = None;
+    // Only the newest of the steps that have arrived is worth showing.
+    let mut newest = None;
     for message in creation.messages.try_iter() {
         match message {
-            CreationMessage::Step(step) => {
-                let (percent, text) = creation_progress(&step);
-                creation.dialog.update(percent, Some(&text));
-            }
+            CreationMessage::Step(step) => newest = Some(step),
             CreationMessage::Finished(result) => finished = Some(result),
+        }
+    }
+    match newest {
+        Some(step) => creation.show(&step),
+        // The dialog only learns that Cancel was pressed when it is updated, so it is updated
+        // on every tick; with nothing changed, that shows and reports nothing new.
+        None => {
+            let percent = creation.shown.as_ref().map_or(0, |shown| shown.percent);
+            creation.dialog.update(percent, None);
         }
     }
     if creation.dialog.was_cancelled() && !creation.cancel.swap(true, Ordering::Relaxed) {

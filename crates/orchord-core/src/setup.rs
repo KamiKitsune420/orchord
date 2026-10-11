@@ -73,7 +73,9 @@ pub fn qemu_install_outcome(status: ExitStatus) -> InstallOutcome {
 /// What stops QEMU from using the Windows Hypervisor Platform on this PC, in QEMU's own
 /// words, or `None` when it works. QEMU must be installed.
 pub fn hypervisor_problem(settings: &AppSettings) -> Option<String> {
-    accelerator_problem(settings, "whpx")
+    // Asked with the very options a Mac will be started with, so that a QEMU too old to know
+    // one of them is found out here and not by a Mac that fails to start.
+    accelerator_problem(settings, &settings.accelerator())
 }
 
 /// Starts a QEMU with nothing in it, paused, on the named accelerator, with its control

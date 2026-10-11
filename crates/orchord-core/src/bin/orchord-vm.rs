@@ -6,6 +6,7 @@
 //!   orchord-vm read <screen.ppm>      prints the text recognised on a picture of a Mac's screen
 //!   orchord-vm smc-key                says whether each public source still holds the Apple SMC key
 //!   orchord-vm check                  says whether this PC has what a Mac needs, changing nothing
+//!   orchord-vm report <vm-folder>     writes the diagnostic report for a Mac and prints where it is
 //!
 //! A Mac set up for easy install whose macOS is not installed yet is run through easy install,
 //! exactly as the window does it.
@@ -45,6 +46,12 @@ fn main() -> Result<()> {
         }
         println!("Apple SMC key: {}", if orchord_core::smc_key::is_genuine(&settings.osk) { "entered" } else { "not entered, or not the key" });
         println!("Text recognition: {}", if orchord_core::ocr::available() { "available" } else { "no language installed" });
+        return Ok(());
+    }
+    if first == "report" {
+        // What Machine > Save Diagnostic Report writes, without opening File Explorer.
+        let folder = args.next().context("report needs a virtual machine's folder")?;
+        println!("{}", orchord_core::diagnostics::save(&Vm::load(&PathBuf::from(folder))?, &settings)?.display());
         return Ok(());
     }
     if first == "smc-key" {

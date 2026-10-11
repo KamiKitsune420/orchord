@@ -6,6 +6,7 @@
 
 pub mod config;
 pub mod create;
+pub mod diagnostics;
 pub mod easy_install;
 pub mod file_server;
 pub mod host;
@@ -21,10 +22,11 @@ pub mod setup;
 pub mod smc_key;
 pub mod sound;
 pub mod supervisor;
+pub mod update;
 pub mod usb;
 
 pub use config::{AudioMode, Install, InstallStage, SharedFolder, Vm, VmConfig};
 pub use macos::MacosVersion;
-pub use settings::AppSettings;
+pub use settings::{AppSettings, Appearance};
 pub use qmp::POINTER_MAX;
 pub use supervisor::{PointerButton, StopReason, Supervisor, VmCommand, VmEvent};

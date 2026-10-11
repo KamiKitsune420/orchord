@@ -154,6 +154,31 @@ impl Vm {
         Some(if media.is_absolute() { media.clone() } else { self.dir.join(media) })
     }
 
+    /// How much room the Mac's disk takes on this PC, in bytes.
+    pub fn disk_bytes(&self) -> u64 {
+        std::fs::metadata(self.disk_path()).map(|disk| disk.len()).unwrap_or(0)
+    }
+
+    /// Deletes what Orchord made of this virtual machine: its disk and its `vmconfig` folder.
+    /// Nothing else is touched, because nothing else is Orchord's: files in the shared folder
+    /// or anything the user put beside them stay, and the virtual machine's own folder is
+    /// removed only when it is left empty. Returns how many things remain in it.
+    pub fn delete(&self) -> Result<usize> {
+        let disk = self.disk_path();
+        if disk.exists() {
+            std::fs::remove_file(&disk).with_context(|| format!("deleting {}", disk.display()))?;
+        }
+        let config = self.config_dir();
+        if config.exists() {
+            std::fs::remove_dir_all(&config).with_context(|| format!("deleting {}", config.display()))?;
+        }
+        // `remove_dir` only removes an empty folder, which is the point: it cannot take anything with it.
+        for folder in [disk.parent().map(Path::to_path_buf), Some(self.dir.join("shared")), Some(self.dir.clone())].into_iter().flatten() {
+            let _ = std::fs::remove_dir(folder);
+        }
+        Ok(std::fs::read_dir(&self.dir).map(|entries| entries.count()).unwrap_or(0))
+    }
+
     pub fn shared_folder_path(&self) -> PathBuf {
         self.config.shared_folder.path.clone().unwrap_or_else(|| self.dir.join("shared"))
     }
@@ -183,4 +208,41 @@ pub fn list_vms(root: &Path, elsewhere: &[PathBuf]) -> Vec<Vm> {
     let mut vms: Vec<Vm> = folders.iter().filter_map(|folder| Vm::load(folder).ok()).collect();
     vms.sort_by_key(|vm| vm.config.name.to_lowercase());
     vms
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Vm, VmConfig};
+    use crate::macos::MacosVersion;
+
+    /// A made-up virtual machine in the temporary folder, with a disk and a settings file.
+    fn made_up_vm(name: &str) -> Vm {
+        let dir = std::env::temp_dir().join(format!("orchord-config-test-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let vm = Vm { dir, config: VmConfig::new(name, MacosVersion::BigSur) };
+        vm.save().unwrap();
+        std::fs::create_dir_all(vm.disk_path().parent().unwrap()).unwrap();
+        std::fs::write(vm.disk_path(), b"disk").unwrap();
+        vm
+    }
+
+    #[test]
+    fn deleting_a_virtual_machine_removes_its_folder() {
+        let vm = made_up_vm("alone");
+        std::fs::create_dir_all(vm.dir.join("shared")).unwrap();
+        assert_eq!(vm.disk_bytes(), 4);
+        assert_eq!(vm.delete().unwrap(), 0);
+        assert!(!vm.dir.exists());
+    }
+
+    #[test]
+    fn deleting_a_virtual_machine_leaves_the_users_own_files() {
+        let vm = made_up_vm("with-files");
+        std::fs::create_dir_all(vm.dir.join("shared")).unwrap();
+        std::fs::write(vm.dir.join("shared").join("letter.txt"), b"mine").unwrap();
+        assert_eq!(vm.delete().unwrap(), 1);
+        assert!(!vm.disk_path().exists() && !vm.config_dir().exists());
+        assert_eq!(std::fs::read(vm.dir.join("shared").join("letter.txt")).unwrap(), b"mine");
+        let _ = std::fs::remove_dir_all(&vm.dir);
+    }
 }

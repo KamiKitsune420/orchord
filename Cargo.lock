@@ -1022,7 +1022,7 @@ dependencies = [
 
 [[package]]
 name = "orchord"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "embed-manifest",
  "orchord-core",
@@ -1033,7 +1033,7 @@ dependencies = [
 
 [[package]]
 name = "orchord-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "dav-server",

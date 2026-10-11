@@ -3,13 +3,13 @@ members = ["crates/orchord-core"]
 
 [package]
 name = "orchord"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 
 [dependencies]
 orchord-core = { path = "crates/orchord-core" }
 wxdragon = "0.9.22"
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_LibraryLoader", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_LibraryLoader", "Win32_UI_WindowsAndMessaging"] }
 prismer = "0.1.4"
 
 [build-dependencies]

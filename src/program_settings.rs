@@ -9,12 +9,14 @@
 use std::path::PathBuf;
 
 use orchord_core::smc_key::{self, KEY_LENGTH};
-use orchord_core::{AppSettings, ocr, setup};
+use orchord_core::{AppSettings, Appearance, host, ocr, setup};
 use wxdragon::prelude::*;
 
-use crate::speech;
+use crate::{busy, speech};
 
 const TITLE: &str = "Orchord Settings";
+/// The appearances on offer, in the order the list shows them.
+const APPEARANCES: [(Appearance, &str); 3] = [(Appearance::System, "The same as Windows"), (Appearance::Light, "Light"), (Appearance::Dark, "Dark")];
 
 /// Shows the dialog and returns the changed settings, or `None` if the user cancelled.
 pub fn edit(parent: Frame, settings: &AppSettings) -> Option<AppSettings> {
@@ -46,6 +48,15 @@ pub fn edit(parent: Frame, settings: &AppSettings) -> Option<AppSettings> {
     sizer.add(&key, 0, SizerFlag::Expand | SizerFlag::All, 8);
     sizer.add(&key_fetch, 0, SizerFlag::All, 8);
 
+    let appearance_label = StaticText::builder(&dialog).with_label("&Appearance (changes when Orchord next starts):").build();
+    let appearance_choices = APPEARANCES.iter().map(|(_, name)| name.to_string()).collect();
+    let appearance_now = APPEARANCES.iter().position(|(appearance, _)| *appearance == settings.appearance).unwrap_or(0);
+    let appearance = Choice::builder(&dialog).with_choices(appearance_choices).with_selection(Some(appearance_now as u32)).build();
+    sizer.add(&appearance_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 8);
+    sizer.add(&appearance, 0, SizerFlag::Expand | SizerFlag::All, 8);
+    let updates = CheckBox::builder(&dialog).with_label("Check for a &new version of Orchord when it starts").with_value(settings.check_for_updates).build();
+    sizer.add(&updates, 0, SizerFlag::All, 8);
+
     let buttons = BoxSizer::builder(Orientation::Horizontal).build();
     let ok = Button::builder(&dialog).with_label("OK").build();
     let cancel = Button::builder(&dialog).with_id(ID_CANCEL).with_label("Cancel").build();
@@ -65,7 +76,14 @@ pub fn edit(parent: Frame, settings: &AppSettings) -> Option<AppSettings> {
     // OK only closes the dialog when everything in it can be used; otherwise it says what is wrong.
     let collect = {
         let settings = settings.clone();
-        move || AppSettings { qemu_dir: path_in(qemu), vm_root: path_in(root), osk: key.get_value().trim().to_string(), ..settings.clone() }
+        move || AppSettings {
+            qemu_dir: path_in(qemu),
+            vm_root: path_in(root),
+            osk: key.get_value().trim().to_string(),
+            appearance: APPEARANCES[appearance.get_selection().unwrap_or(0) as usize % APPEARANCES.len()].0,
+            check_for_updates: updates.get_value(),
+            ..settings.clone()
+        }
     };
     {
         let collect = collect.clone();
@@ -107,6 +125,13 @@ fn set_up_pc(dialog: Dialog, qemu_field: TextCtrl, key_field: TextCtrl, settings
     let mut hypervisor_works = false;
     let mut current = AppSettings { qemu_dir: path_in(qemu_field), ..settings.clone() };
 
+    let intel = host::cpu_vendor() == "GenuineIntel";
+    report.push(if intel {
+        format!("Processor: {}.", host::cpu_name())
+    } else {
+        format!("Processor: {}. Orchord has only been proved on Intel processors. On this one it starts Macs with a setting meant for processors that are not Intel's, and that has not been tested yet; if a Mac does not start, choose Save Diagnostic Report in the Machine menu and send the report to Orchord's author.", host::cpu_name())
+    });
+
     if !current.qemu_exe().is_file() {
         if setup::winget().is_none() {
             report.push(format!("QEMU: not installed, and this Windows has no winget to install it with. Download QEMU for Windows from {} and install it.", setup::QEMU_DOWNLOAD_PAGE));
@@ -133,14 +158,12 @@ fn set_up_pc(dialog: Dialog, qemu_field: TextCtrl, key_field: TextCtrl, settings
     }
     if current.qemu_exe().is_file() {
         report.push(format!("QEMU: found in {}.", current.qemu_dir.display()));
-        speech::speak("Checking the Windows Hypervisor Platform.", true);
-        let cursor = BusyCursor::new(None);
-        let problem = setup::hypervisor_problem(&current);
-        drop(cursor);
+        let asked = current.clone();
+        let problem = busy::wait(&dialog, "Checking the Windows Hypervisor Platform.", move || setup::hypervisor_problem(&asked));
         hypervisor_works = problem.is_none();
         report.push(match problem {
             None => "Windows Hypervisor Platform: working.".to_string(),
-            Some(problem) if confirm(dialog, &format!("QEMU cannot use the Windows Hypervisor Platform, which a Mac needs. It said: {problem} This usually means the Windows feature is turned off. Turn it on now? Windows asks for permission, and Windows has to be restarted afterwards.")) => match setup::enable_hypervisor() {
+            Some(problem) if confirm(dialog, &format!("QEMU cannot use the Windows Hypervisor Platform, which a Mac needs. It said: {problem} This usually means the Windows feature is turned off. Turn it on now? Windows asks for permission, and Windows has to be restarted afterwards.")) => match busy::wait(&dialog, "Turning the Windows Hypervisor Platform on. Windows is asking for permission.", setup::enable_hypervisor) {
                 setup::HypervisorChange::RestartNeeded => "Windows Hypervisor Platform: turned on. Restart Windows, then it works.".to_string(),
                 setup::HypervisorChange::Done => "Windows Hypervisor Platform: Windows says it is on. If Macs still do not start, restart Windows and make sure virtualisation is turned on in the PC's firmware settings.".to_string(),
                 setup::HypervisorChange::NotDone(code) => format!("Windows Hypervisor Platform: not turned on (code {code}). You can turn it on yourself: Turn Windows features on or off, check Windows Hypervisor Platform, restart."),
@@ -194,11 +217,7 @@ fn fetch_key(dialog: Dialog, field: TextCtrl) {
     if !confirm(dialog, &question) {
         return;
     }
-    speech::speak("Getting the key.", true);
-    let cursor = BusyCursor::new(None);
-    let result = smc_key::fetch();
-    drop(cursor);
-    match result {
+    match busy::wait(&dialog, "Getting the key from the internet.", smc_key::fetch) {
         Ok((key, source)) => {
             field.set_value(&key);
             field.set_focus();

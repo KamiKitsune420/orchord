@@ -27,6 +27,28 @@ pub struct AppSettings {
     /// diagnostic tools can connect to while Orchord runs a Mac. Absent in normal use.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub debug_qmp_port: Option<u16>,
+    /// Light, dark, or whatever Windows is set to. Takes effect when Orchord next starts.
+    pub appearance: Appearance,
+    /// Whether Orchord asks GitHub, when it starts, if a newer version has been published.
+    pub check_for_updates: bool,
+    /// For experiments: what follows QEMU's `-accel`, in place of what Orchord would choose
+    /// for this PC's processor (see `host::default_accelerator`). Absent in normal use.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accelerator: Option<String>,
+    /// For experiments: arguments added to the end of QEMU's command line, where they win
+    /// over Orchord's own. Empty in normal use.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub extra_qemu_args: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum Appearance {
+    /// Follow Windows' own light or dark setting.
+    #[default]
+    System,
+    Light,
+    Dark,
 }
 
 /// The boot folder travels with the program: the build puts it beside the program file.
@@ -49,6 +71,10 @@ impl Default for AppSettings {
             other_vms: Vec::new(),
             right_control_is_command: true,
             debug_qmp_port: None,
+            appearance: Appearance::System,
+            check_for_updates: true,
+            accelerator: None,
+            extra_qemu_args: Vec::new(),
         }
     }
 }
@@ -83,6 +109,11 @@ impl AppSettings {
             std::fs::create_dir_all(dir)?;
         }
         std::fs::write(&path, toml::to_string_pretty(self)?).with_context(|| format!("writing {}", path.display()))
+    }
+
+    /// What QEMU's `-accel` is given: the hypervisor, with the options this PC's processor needs.
+    pub fn accelerator(&self) -> String {
+        self.accelerator.clone().unwrap_or_else(|| crate::host::default_accelerator(&crate::host::cpu_vendor()).to_string())
     }
 
     pub fn qemu_img_exe(&self) -> PathBuf {

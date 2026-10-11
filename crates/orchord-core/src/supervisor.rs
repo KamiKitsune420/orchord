@@ -143,7 +143,8 @@ enum Outcome {
 impl Supervisor {
     pub fn new(vm: Vm, settings: AppSettings) -> Self {
         let debug_qmp_port = settings.debug_qmp_port;
-        Supervisor { vm, settings, install_media: None, debug_qmp_port, extra_qemu_args: Vec::new() }
+        let extra_qemu_args = settings.extra_qemu_args.clone();
+        Supervisor { vm, settings, install_media: None, debug_qmp_port, extra_qemu_args }
     }
 
     /// Runs the Mac until it shuts down, is stopped, or fails. Blocks; call it on its own thread.
@@ -187,7 +188,13 @@ impl Supervisor {
                     let _ = child.wait();
                     let said = self.qemu_log_tail();
                     // The commonest reason on a new PC, and the one Orchord can put right itself.
-                    let hint = if said.to_lowercase().contains("whpx") { " The Windows Hypervisor Platform may be turned off: open Orchord Settings from the File menu and press Check and set up this PC." } else { "" };
+                    let hint = if said.contains("ignore-unknown-msr") {
+                        " This QEMU is too old for a processor that is not Intel's: Orchord needs QEMU 11.1 or newer there."
+                    } else if said.to_lowercase().contains("whpx") {
+                        " The Windows Hypervisor Platform may be turned off: open Orchord Settings from the File menu and press Check and set up this PC."
+                    } else {
+                        ""
+                    };
                     return Ok(StopReason::Failed(format!("QEMU did not start. {said}{hint}")));
                 }
             };

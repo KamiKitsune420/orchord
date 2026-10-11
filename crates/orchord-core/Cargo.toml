@@ -1,6 +1,6 @@
 [package]
 name = "orchord-core"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "Virtual machine model, QEMU launcher and supervisor for orchord. No user interface code."
 

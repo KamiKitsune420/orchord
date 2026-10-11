@@ -48,11 +48,35 @@ and adds the window, the installer automation, the speech and the file sharing a
 - Control+P: settings for the Mac.
 - Control+U: USB devices.
 - Control+Comma: Orchord's own settings (checking and setting up the PC, the QEMU folder,
-  where Macs are kept, the Apple SMC key).
+  where Macs are kept, the Apple SMC key, light or dark appearance, checking for updates).
+- F11: full screen, and back. The title, menus and status line are hidden in full screen.
+- Delete: delete the selected Mac. Orchord asks first, and Enter answers No.
 - F5: read the list of Macs again.
 
 While the keyboard is captured, Right Control and the Menu key work as extra Command keys,
 because Windows keeps Windows+L for itself. This can be turned off in the Machine menu.
+While it is captured every key goes to the Mac, F11 and Delete included.
+
+## Updates
+
+When Orchord starts it asks GitHub whether a newer version has been published, and says so if
+there is one. File, Check for Updates shows what is new and, if you agree, downloads the new
+version, checks it against the checksum GitHub gives for it, puts it in place and restarts
+Orchord. The question at start-up sends nothing about you or your PC; it can be turned off
+in Orchord Settings.
+
+## Deleting a Mac
+
+Delete removes the Mac's disk and its `vmconfig` folder, and nothing else. Files in its
+shared folder, and anything else you put in its folder, are yours and are left where they
+are; Orchord says so when that happens.
+
+## When a Mac will not start
+
+Machine, Save Diagnostic Report writes one text file into the Mac's folder and shows it in
+File Explorer. It holds the PC's processor, the QEMU version, how the Mac is started and the
+ends of its logs, which is what someone helping from afar needs. It does not hold the Apple
+SMC key; it does hold folder names, which may include your Windows user name.
 
 ## macOS versions
 
@@ -72,7 +96,12 @@ responsive; animation is not.
 
 ## Known limits
 
-- Everything above was tested on that one laptop. AMD processors have not been tried.
+- Everything above was tested on that one Intel laptop.
+- **AMD processors do not work yet, as far as is known.** On an AMD PC, versions up to 0.1.1
+  stop on a black screen of start-up text. From 0.1.2 Orchord starts Macs differently on a
+  processor that is not Intel's (see `host.rs`), which is the likeliest cure but has not
+  been tried on an AMD PC. If a Mac does not start on yours, a diagnostic report (Machine
+  menu) sent in an issue would help a great deal.
 - Easy install has run from start to finish for Big Sur, from Apple's download and from an
   ISO. For Monterey and Sequoia only its first stage has been run.
 - Handing a USB device to a Mac has not worked yet: it needs the UsbDk driver, which was not
@@ -82,8 +111,8 @@ responsive; animation is not.
 
 ## What you need
 
-Windows 10 or 11 on an Intel processor. Orchord's "Check and set up this PC" button looks for
-the rest and offers to get what is missing:
+Windows 10 or 11 on an Intel processor (AMD: see Known limits). Orchord's "Check and set up
+this PC" button looks for the rest and offers to get what is missing:
 
 - **QEMU 11 or newer.** The button installs it with winget, Windows' own package manager,
   which downloads QEMU's installer from QEMU's site; Windows asks for permission. By hand:
@@ -111,7 +140,10 @@ The button changes nothing without a Yes from you.
    press OK.
 5. Press Control+N to create a Mac.
 
-The settings are kept in `%APPDATA%\orchord\settings.toml`.
+The settings are kept in `%APPDATA%\orchord\settings.toml`. Two lines can be added to that
+file by hand for experiments, and are not needed otherwise: `accelerator = "..."` replaces
+what Orchord gives QEMU's `-accel`, and `extra_qemu_args = ["...", "..."]` adds arguments to
+the end of QEMU's command line.
 
 ## Getting the Apple SMC key
 
@@ -157,7 +189,8 @@ makes the zip for the Releases page.
 ## Layout
 
 - `src\`: the window. `main_window.rs`, `wizard.rs`, `program_settings.rs`,
-  `settings_dialog.rs`, `usb_dialog.rs`, `keyboard_capture.rs`, `speech.rs`.
+  `settings_dialog.rs`, `usb_dialog.rs`, `updater.rs`, `keyboard_capture.rs`, `speech.rs`,
+  and `busy.rs`, which keeps the window answering while slow work is done elsewhere.
 - `crates\orchord-core\`: everything without a window. The QEMU launcher, the supervisor that
   keeps a Mac running across restarts, easy install and its text recognition, the installer
   download, the handling of installer files, the shared-folder server, USB hand-over and the

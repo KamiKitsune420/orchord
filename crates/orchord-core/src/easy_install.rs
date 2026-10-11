@@ -31,6 +31,7 @@ const LOOK_EVERY: Duration = Duration::from_secs(4);
 const WATCH_EVERY: Duration = Duration::from_secs(15);
 /// How long the installer may take to show its first window before easy install gives up.
 const RECOVERY_START_LIMIT: Duration = Duration::from_secs(60 * 60);
+const PAGE_CHANGE_WAIT: Duration = Duration::from_secs(20);
 const TERMINAL_START_WAIT: Duration = Duration::from_secs(10);
 /// If Terminal has not come forward this long after being chosen, it is chosen again.
 const TERMINAL_START_LIMIT: Duration = Duration::from_secs(45);
@@ -43,6 +44,7 @@ const STUCK_LIMIT: Duration = Duration::from_secs(20 * 60);
 const PATIENT_AFTER: u32 = 3;
 const CRASH_RESTART_LIMIT: u32 = 3;
 const PROGRESS_EVERY: Duration = Duration::from_secs(15 * 60);
+const STILL_GOING_EVERY: Duration = Duration::from_secs(45 * 60);
 /// Words this near the top of the Mac's screen are in its menu bar.
 const MENU_BAR_HEIGHT: f32 = 30.0;
 const PICTURE_LIMIT: Duration = Duration::from_secs(30);
@@ -108,6 +110,7 @@ struct Driver {
     /// When the current run of one repeated answer began.
     rule_since: Instant,
     last_progress: Option<Instant>,
+    last_progress_words: String,
     crash_restarts: u32,
     /// Easy install has stopped trying; the Mac is the user's from here.
     stood_down: bool,
@@ -125,13 +128,14 @@ enum Rule {
     Agree,
     ChooseDisk,
     Continue,
+    KeepInstalling,
 }
 
 impl Driver {
     fn new(vm: Vm, commands: Sender<VmCommand>, events: Sender<VmEvent>) -> Self {
         let picture = vm.config_dir().join("install-screen.ppm");
         let now = Instant::now();
-        Driver { vm, picture, commands, events, running: false, started: now, launch_started: now, next_look: now, asked: None, terminal_chosen: None, terminal_seen: None, erase_typed: None, erased: false, last_rule: None, repeats: 0, rule_since: now, last_progress: None, crash_restarts: 0, stood_down: false }
+        Driver { vm, picture, commands, events, running: false, started: now, launch_started: now, next_look: now, asked: None, terminal_chosen: None, terminal_seen: None, erase_typed: None, erased: false, last_rule: None, repeats: 0, rule_since: now, last_progress: None, last_progress_words: String::new(), crash_restarts: 0, stood_down: false }
     }
 
     fn note(&self, text: &str) {
@@ -199,6 +203,15 @@ impl Driver {
 
     /// The installer (Recovery): erase the disk, then walk through "Reinstall macOS".
     fn work_the_installer(&mut self, screen: &ScreenText) {
+        // "Are you sure you want to cancel installation?" A click meant for Continue can land
+        // after the page has changed, when the button in that place has become Cancel. The
+        // installation carries on behind the question, but cannot finish until it is answered.
+        if screen.contains("want to cancel installation") {
+            if let Some(button) = screen.find("Continue Installing") {
+                self.answer(Rule::KeepInstalling, screen, button);
+            }
+            return;
+        }
         if self.say_progress(screen) {
             return;
         }
@@ -271,6 +284,9 @@ impl Driver {
                 if let Some(button) = screen.find_exact("Continue").into_iter().chain(screen.find_exact("Install")).filter(lower_half).last() {
                     self.click(screen, button);
                 }
+                // The installation starts a few seconds later, and its Cancel button appears
+                // where Continue was. Looking again too soon would press that.
+                self.next_look = Instant::now() + PAGE_CHANGE_WAIT;
             }
         } else if let Some(button) = agree_button(screen) {
             self.answer(Rule::Agree, screen, button);
@@ -327,9 +343,16 @@ impl Driver {
     /// Returns whether the screen shows an installation in progress.
     fn say_progress(&mut self, screen: &ScreenText) -> bool {
         let Some(line) = screen.lines.iter().find(|line| line.text.to_lowercase().contains("remaining")) else { return false };
-        if self.last_progress.is_none_or(|last| last.elapsed() >= PROGRESS_EVERY) {
+        // The installer's estimate can stand still for an hour; the same words are not repeated
+        // every quarter of an hour, only now and then to show that all is still well.
+        // Text recognition sometimes adds stray marks after the sentence; only plain text is passed on.
+        let words: String = line.text.chars().filter(|character| character.is_ascii_alphanumeric() || *character == ' ').collect();
+        let words = words.trim().to_string();
+        let due = if words == self.last_progress_words { STILL_GOING_EVERY } else { PROGRESS_EVERY };
+        if self.last_progress.is_none_or(|last| last.elapsed() >= due) {
             self.last_progress = Some(Instant::now());
-            self.note(&format!("Installing. The Mac says: {}.", line.text.trim().trim_end_matches('.')));
+            self.note(&format!("Installing. The Mac says: {words}."));
+            self.last_progress_words = words;
         }
         self.next_look = Instant::now() + WATCH_EVERY;
         true
@@ -369,6 +392,7 @@ impl Driver {
                 Rule::ChooseReinstall | Rule::Continue | Rule::LeaveWrongProgram => "the installer did not move on",
                 Rule::Agree => "the licence page did not move on",
                 Rule::ChooseDisk => "the installer did not accept the Mac's disk",
+                Rule::KeepInstalling => "the installer kept asking whether to cancel",
             });
         }
         self.stood_down

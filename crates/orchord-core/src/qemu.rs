@@ -14,6 +14,7 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use crate::config::{AudioMode, Vm};
+use crate::installer_image::InstallMedia;
 use crate::settings::AppSettings;
 
 const CPU_FLAGS: &str = "vendor=GenuineIntel,+invtsc,+ssse3,+sse4.2,+popcnt,+avx,+aes,+xsave,+xsaveopt";
@@ -24,14 +25,19 @@ pub struct LaunchOptions {
     pub qmp_port: u16,
     /// A second QMP port for diagnostic tools; QMP accepts one client per socket.
     pub debug_qmp_port: Option<u16>,
-    /// A macOS recovery image to attach as install media, for the first boot of an installation.
-    pub install_media: Option<std::path::PathBuf>,
+    /// A macOS installer image to attach as install media, for the first boot of an installation.
+    pub install_media: Option<InstallMedia>,
     /// Extra QEMU arguments, added last so that they win. For experiments from the command-line runner.
     pub extra_args: Vec<String>,
 }
 
+/// A file name inside a QEMU option. QEMU splits options at commas; a doubled comma is a real one.
+fn file(path: &Path) -> String {
+    path.to_string_lossy().replace(',', ",,")
+}
+
 fn forward_slashes(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
+    file(path).replace('\\', "/")
 }
 
 pub fn build_args(vm: &Vm, settings: &AppSettings, options: &LaunchOptions) -> Vec<OsString> {
@@ -51,8 +57,8 @@ pub fn build_args(vm: &Vm, settings: &AppSettings, options: &LaunchOptions) -> V
     arg("-device", "qemu-xhci,id=xhci".into());
     arg("-device", "usb-ehci,id=ehci,addr=0x10".into());
     arg("-device", format!("isa-applesmc,osk={}", settings.osk));
-    arg("-drive", format!("if=pflash,format=raw,readonly=on,file={}", settings.firmware_code().display()));
-    arg("-drive", format!("if=pflash,format=raw,file={}", vm.vars_path().display()));
+    arg("-drive", format!("if=pflash,format=raw,readonly=on,file={}", file(&settings.firmware_code())));
+    arg("-drive", format!("if=pflash,format=raw,file={}", file(&vm.vars_path())));
     arg("-smbios", "type=2".into());
 
     arg("-device", "ich9-ahci,id=sata".into());
@@ -60,10 +66,10 @@ pub fn build_args(vm: &Vm, settings: &AppSettings, options: &LaunchOptions) -> V
     arg("-drive", format!("id=OpenCoreBoot,if=none,snapshot=on,format=raw,file.driver=vvfat,file.dir={}", forward_slashes(&settings.efi_dir)));
     arg("-device", "ide-hd,bus=sata.2,drive=OpenCoreBoot".into());
     if let Some(media) = &options.install_media {
-        arg("-drive", format!("id=InstallMedia,if=none,format=raw,snapshot=on,file={}", media.display()));
+        arg("-drive", format!("id=InstallMedia,if=none,format={},snapshot=on,file={}", media.format, file(&media.path)));
         arg("-device", "ide-hd,bus=sata.3,drive=InstallMedia".into());
     }
-    arg("-drive", format!("id=MacHDD,if=none,format=qcow2,discard=unmap,file={}", vm.disk_path().display()));
+    arg("-drive", format!("id=MacHDD,if=none,format=qcow2,discard=unmap,file={}", file(&vm.disk_path())));
     arg("-device", "ide-hd,bus=sata.4,drive=MacHDD,rotation_rate=1".into());
 
     arg("-netdev", "user,id=net0".into());
@@ -76,7 +82,7 @@ pub fn build_args(vm: &Vm, settings: &AppSettings, options: &LaunchOptions) -> V
             arg("-device", "virtio-sound-pci,audiodev=snd0".into());
         }
         AudioMode::Record => {
-            arg("-audiodev", format!("wav,id=snd0,path={}", vm.audio_recording_path().display()));
+            arg("-audiodev", format!("wav,id=snd0,path={}", file(&vm.audio_recording_path())));
             arg("-device", "virtio-sound-pci,audiodev=snd0".into());
         }
         AudioMode::None => {}
@@ -90,6 +96,7 @@ pub fn build_args(vm: &Vm, settings: &AppSettings, options: &LaunchOptions) -> V
     if let Some(port) = options.debug_qmp_port {
         arg("-qmp", format!("tcp:127.0.0.1:{port},server=on,wait=off"));
     }
+    // Everything after "file:" is the name, commas included, so this one is not doubled.
     arg("-serial", format!("file:{}", vm.serial_log_path().display()));
 
     args.extend(options.extra_args.iter().cloned());
@@ -150,7 +157,15 @@ mod tests {
         let (vm, settings) = sample(MacosVersion::BigSur);
         let without = joined(&build_args(&vm, &settings, &LaunchOptions::default()));
         assert!(!without.contains("InstallMedia"));
-        let options = LaunchOptions { install_media: Some(PathBuf::from(r"C:\base.img")), ..Default::default() };
+        let options = LaunchOptions { install_media: Some(InstallMedia { path: PathBuf::from(r"C:\base.img"), format: "raw" }), ..Default::default() };
         assert!(joined(&build_args(&vm, &settings, &options)).contains("ide-hd,bus=sata.3,drive=InstallMedia"));
+    }
+
+    #[test]
+    fn a_comma_in_a_file_name_is_doubled_for_qemu() {
+        let (vm, settings) = sample(MacosVersion::BigSur);
+        let media = InstallMedia { path: PathBuf::from(r"D:\Macs\Home, work\vmconfig\installer.vmdk"), format: "vmdk" };
+        let line = joined(&build_args(&vm, &settings, &LaunchOptions { install_media: Some(media), ..Default::default() }));
+        assert!(line.contains(r"format=vmdk,snapshot=on,file=D:\Macs\Home,, work\vmconfig\installer.vmdk"), "{line}");
     }
 }

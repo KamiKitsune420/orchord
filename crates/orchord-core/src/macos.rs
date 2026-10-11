@@ -66,9 +66,27 @@ impl MacosVersion {
         }
     }
 
+    /// The version a file name such as `MacOSBigSur.iso` or `Install macOS Sequoia.cdr` mentions.
+    pub fn named_in(file_name: &str) -> Option<MacosVersion> {
+        let letters: String = file_name.chars().filter(|character| character.is_alphanumeric()).flat_map(char::to_lowercase).collect();
+        MacosVersion::ALL.into_iter().find(|version| letters.contains(&version.short_name().replace(' ', "").to_lowercase()))
+    }
+
     /// Whether VoiceOver can speak inside this version's installer (Recovery).
     /// Monterey's Recovery image cannot start VoiceOver at all.
     pub fn installer_speaks(self) -> bool {
         !matches!(self, MacosVersion::Monterey)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MacosVersion;
+
+    #[test]
+    fn a_file_name_gives_away_its_version() {
+        assert_eq!(MacosVersion::named_in("MacOSBigSur.iso"), Some(MacosVersion::BigSur));
+        assert_eq!(MacosVersion::named_in("Install macOS Sequoia 15.1.cdr"), Some(MacosVersion::Sequoia));
+        assert_eq!(MacosVersion::named_in("installer.iso"), None);
     }
 }

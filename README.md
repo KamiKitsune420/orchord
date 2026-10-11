@@ -17,6 +17,10 @@ and adds the window, the installer automation, the speech and the file sharing a
 - **Easy install.** Orchord downloads the installer from Apple, prepares the disk, works the
   installer by itself, and tells you when macOS has reached its first set-up screen, where it
   turns VoiceOver on. You agree to Apple's licence in the wizard.
+- **Your own installer file.** Instead of downloading, the wizard takes an installer you
+  already have: a full installer saved as `.iso` or `.cdr` (what `createinstallmedia` and
+  `hdiutil` make on a Mac), or Apple's `BaseSystem.dmg`. An ISO is used where it is, not
+  copied, so it has to stay there until macOS is installed. Easy install works with it too.
 - **The Mac's screen as something a screen reader can read.** While a Mac runs, the window
   holds only its screen, so NVDA's text recognition (NVDA+R) reads the Mac. The mouse works
   over the screen, so a recognised word can be clicked.
@@ -57,6 +61,10 @@ Tested on an Intel Core i7-1355U laptop:
 - Catalina 10.15 boots but has no sound. Lion 10.7 and Mountain Lion 10.8 do not boot.
 - Apple silicon versions of macOS are out of scope.
 
+If a Mac you are installing by hand goes quiet after a restart, read its screen with NVDA+R.
+"OpenCore Boot Menu" means the boot loader is waiting for a key: send the keyboard to the Mac
+and press Enter. Easy install does this by itself.
+
 There is no graphics acceleration: macOS draws everything on the processor. Speech is
 responsive; animation is not.
 
@@ -87,7 +95,8 @@ command line and prints what happens to it.
   `keyboard_capture.rs`, `speech.rs`.
 - `crates\orchord-core\`: everything without a window. The QEMU launcher, the supervisor that
   keeps a Mac running across restarts, easy install and its text recognition, the installer
-  download, the shared-folder server, USB hand-over and the sound cues.
+  download, the handling of installer files, the shared-folder server, USB hand-over and the
+  sound cues.
 - `third_party\prism\`: the [Prism](https://github.com/ethindp/prism) speech library.
 - `third_party\opencore\`: the boot folder the Macs start from, built by `orchord-efi` from
   the official OpenCore release and acidanthera's kernel extensions.

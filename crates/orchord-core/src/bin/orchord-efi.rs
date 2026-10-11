@@ -84,6 +84,9 @@ fn configure(config: &mut Dictionary) -> Result<()> {
     set(config, &["Misc", "Debug", "Target"], 0.into())?;
     set(config, &["Misc", "Security", "AllowSetDefault"], true.into())?;
     // Only Mac volumes on SATA disks are looked at, so the installer on the Mac's disk starts by itself.
+    // OpenCore knows a Mac volume by its GPT partition type. Without this filter it also offers
+    // its own boot disk and stops at its menu; that is why an installer ISO, which has no GPT,
+    // is given one by `installer_image` instead of the filter being loosened.
     set(config, &["Misc", "Security", "ScanPolicy"], 66307.into())?;
     set(config, &["Misc", "Security", "SecureBootModel"], "Disabled".into())?;
     set(config, &["Misc", "Security", "Vault"], "Optional".into())?;

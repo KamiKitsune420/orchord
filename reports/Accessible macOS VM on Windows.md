@@ -130,6 +130,24 @@ Changes this makes to the recommendations below: test and default to Sequoia 15,
 - **Suspend and Resume work from the window.** QEMU reported "paused" and then "running".
 - **Orchord's own boot folder works.** Built from the official OpenCore 1.0.8 release, OpenCore's `Sample.plist` plus about thirty settings, and four acidanthera kernel extensions, it booted the installed Big Sur, Monterey (67 seconds to the first set-up screen) and Sequoia (89 seconds). The OSX-KVM configuration in use until now named several files that were never present; OpenCore had been skipping them.
 
+### Installing from an ISO the user already has (11 October 2026)
+
+Tested with `MacOSBigSur.iso`, a 13.2 GB full installer of Big Sur 11.2 that was already on the laptop.
+
+- **An installer ISO is not a CD image.** It is what `hdiutil` writes from a `createinstallmedia` disk: an old Apple partition map and one HFS+ volume. Nothing in it is ISO 9660.
+- **Attached as it is, it gives a black screen.** The firmware cannot read an Apple partition map, so OpenCore never sees the volume.
+- **Attaching only the volume is not enough either.** OpenCore's scan policy tells Mac volumes apart by their GPT partition type, and a bare volume has none.
+- **Loosening the scan policy is the wrong fix.** With the file-system filter off, OpenCore found the installer but also offered its own boot disk, and stopped at its menu waiting for a key.
+- **What works is giving the volume a GPT without copying it.** Orchord writes a 32 KB start (protective MBR, GPT header, entries) and a 17 KB end (the spare copies), and a VMDK description that tells QEMU to present start, the volume straight out of the ISO, and end as one disk. The Mac sees what a `createinstallmedia` USB stick looks like. Existing Macs and the boot folder are untouched.
+- **QEMU's VMDK reader has a trap.** An empty line before the lines that name the pieces makes it add the first piece twice. The firmware coped, by finding the partition table again inside the partition; macOS did not, and waited for ever for its root device.
+- **A full installer is much quicker than Apple's small one.** Its first window appeared 110 seconds after starting, and its first stage, copying to the Mac's disk, took about three minutes, because nothing is downloaded.
+- **Easy install needed two changes.** The first window says "Install macOS Big Sur", not "Reinstall macOS Big Sur". And the page that asks for a disk also shows the installer's own volume, named "Install macOS Big Sur" and locked; its name was being taken for the Install button.
+- **The wizard checks the file before anything is created.** It looks at what the file holds, not at its extension: an Apple disk image is unpacked as before, a disk with a GPT is used as it is, a Mac volume without one gets the treatment above. A data disc, a Mac disc with no start-up folder (VMware's Tools disc was the test) and a file that is no disc at all are each refused with their own message.
+- **The wizard also reads the version in the file's name.** Choosing Sequoia for `MacOSBigSur.iso` brings a question offering to change the version to Big Sur.
+- **The whole installation ran from the ISO to the first set-up screen in about 65 minutes**, against 3 hours 22 minutes for the same system downloaded from Apple. It ended at "Select Your Country or Region" with VoiceOver's "Press the escape key to hear..." prompt on screen.
+- **OpenCore's menu appeared once, uninvited.** After the fourth restart OpenCore showed its text menu, with "Macintosh HD" marked, and waited for a key; macOS had most likely asked for a one-time start from something that was gone by then, and OpenCore falls back to its menu when a start fails. The next start went straight into macOS. Easy install now presses Return when it reads "OpenCore Boot Menu". That was proved by switching the menu on in a copy of the boot folder: Return started macOS, and the Mac reached the set-up screen. Someone installing by hand would have to press Return there themselves; nothing speaks at that menu.
+- **Limits.** The ISO is used where it is, so it must stay there until macOS is installed. Its folder and name must be plain English letters, digits and punctuation, because of how QEMU on Windows reads the description file. Only the Big Sur ISO was tested; Monterey and Sequoia ISOs have the same shape but were not tried.
+
 ## Recommendations at a glance
 
 - Engine: QEMU 11.x or newer with `-accel whpx`, started headless and controlled over QMP. Do not write an emulator or hypervisor from scratch.

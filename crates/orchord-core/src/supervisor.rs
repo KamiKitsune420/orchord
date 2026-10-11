@@ -23,6 +23,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 
 use crate::config::{InstallStage, Vm};
+use crate::installer_image;
 use crate::qemu::{LaunchOptions, build_args};
 use crate::qmp::QmpClient;
 use crate::settings::AppSettings;
@@ -172,7 +173,11 @@ impl Supervisor {
         loop {
             launch += 1;
             let _ = events.send(VmEvent::Starting { launch });
-            let options = LaunchOptions { qmp_port: free_port()?, debug_qmp_port: self.debug_qmp_port, install_media: self.install_media.take().or_else(|| self.vm.install_media_path()), extra_args: self.extra_qemu_args.clone() };
+            let install_media = match self.install_media.take().or_else(|| self.vm.install_media_path()) {
+                Some(image) => Some(installer_image::prepare(&image, &self.vm.config_dir())?),
+                None => None,
+            };
+            let options = LaunchOptions { qmp_port: free_port()?, debug_qmp_port: self.debug_qmp_port, install_media, extra_args: self.extra_qemu_args.clone() };
             let mut child = self.spawn(&options)?;
             let started = Instant::now();
             let mut qmp = match QmpClient::connect(options.qmp_port, Duration::from_secs(20)) {

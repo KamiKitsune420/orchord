@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use orchord_core::create::{InstallerSource, NewVm};
-use orchord_core::{AppSettings, MacosVersion};
+use orchord_core::{AppSettings, MacosVersion, installer_image};
 use wxdragon::prelude::*;
 use wxdragon::widgets::SimpleBook;
 
@@ -85,7 +85,7 @@ pub fn run(parent: Frame, settings: &AppSettings) -> Option<Answers> {
     let version = Choice::builder(&page).with_choices(VERSIONS.iter().map(|version| version.display_name().to_string()).collect()).with_selection(Some(0)).build();
     let source_label = StaticText::builder(&page).with_label("&Installer:").build();
     let source = Choice::builder(&page).with_choices(vec!["Download it from Apple".to_string(), "Use an installer file I already have".to_string()]).with_selection(Some(0)).build();
-    let file_label = StaticText::builder(&page).with_label("Installer &file (BaseSystem.dmg, or the same image as .img):").build();
+    let file_label = StaticText::builder(&page).with_label("Installer &file (an ISO or CDR installer, or BaseSystem.dmg):").build();
     let file = TextCtrl::builder(&page).build();
     let file_browse = Button::builder(&page).with_label("Br&owse for the installer file...").build();
     let easy = CheckBox::builder(&page).with_label("Use &easy install: Orchord installs macOS by itself").with_value(true).build();
@@ -163,7 +163,7 @@ pub fn run(parent: Frame, settings: &AppSettings) -> Option<Answers> {
         }
     });
     file_browse.on_click(move |_| {
-        let chooser = FileDialog::builder(&dialog).with_message("Choose the macOS installer file").with_wildcard("macOS installer images (*.dmg;*.img)|*.dmg;*.img|All files (*.*)|*.*").build();
+        let chooser = FileDialog::builder(&dialog).with_message("Choose the macOS installer file").with_wildcard("macOS installer images (*.iso;*.cdr;*.dmg;*.img)|*.iso;*.cdr;*.dmg;*.img|All files (*.*)|*.*").build();
         if chooser.show_modal() == ID_OK {
             if let Some(path) = chooser.get_path() {
                 file.set_value(&path);
@@ -218,7 +218,7 @@ fn show_page(controls: Controls, page: usize) {
 /// Next on the first three pages, Finish on the last. A page with a mistake stays put and says why.
 fn go_next(controls: Controls, defaults_for: &Cell<MacosVersion>) {
     let page = controls.book.selection().max(0) as usize;
-    let new = collect(controls);
+    let mut new = collect(controls);
     let problem = match page {
         0 => NewVm { source: InstallerSource::Apple, ..new.clone() }.problem(),
         1 => page_two_problem(controls, &new),
@@ -230,6 +230,15 @@ fn go_next(controls: Controls, defaults_for: &Cell<MacosVersion>) {
     }
     match page {
         1 => {
+            // A Mac is set up differently for each version, and one set up for the wrong
+            // version may not start. The file's name is the only hint of what is in it.
+            if let Some(named) = named_version(&new).filter(|named| *named != new.macos) {
+                let question = format!("The installer file's name says {}, but the version chosen is {}. A Mac set up for the wrong version may not start. Change the version to {}?", named.short_name(), new.macos.short_name(), named.short_name());
+                if MessageDialog::builder(&controls.dialog, &question, "New Virtual Machine").with_style(MessageDialogStyle::YesNo | MessageDialogStyle::IconQuestion).build().show_modal() == ID_YES {
+                    controls.version.set_selection(VERSIONS.iter().position(|version| *version == named).unwrap_or(0) as u32);
+                    new = collect(controls);
+                }
+            }
             let silent_installer = !new.easy_install && !new.macos.installer_speaks();
             let question = format!("VoiceOver cannot speak in the {} installer. Without easy install you would need sighted help to install it. Continue without easy install?", new.macos.display_name());
             if silent_installer && MessageDialog::builder(&controls.dialog, &question, "New Virtual Machine").with_style(MessageDialogStyle::YesNo | MessageDialogStyle::IconWarning).build().show_modal() != ID_YES {
@@ -256,11 +265,23 @@ fn page_two_problem(controls: Controls, new: &NewVm) -> Option<String> {
         if !file.is_file() {
             return Some(if file.as_os_str().is_empty() { "Choose the installer file, or change Installer to download it from Apple.".to_string() } else { format!("The installer file {} does not exist.", file.display()) });
         }
+        // Better to hear now that a file is not an installer than to meet a silent black screen later.
+        if let Err(error) = installer_image::inspect(file) {
+            return Some(format!("{error:#}"));
+        }
     }
     if new.easy_install && !controls.agree.get_value() {
         return Some("Easy install accepts Apple's licence in the installer for you, so you need to agree to it here first. Check the box that says you have read and agree to the licence, or turn easy install off.".to_string());
     }
     None
+}
+
+/// The macOS version the chosen installer file's name mentions, if it mentions one.
+fn named_version(new: &NewVm) -> Option<MacosVersion> {
+    match &new.source {
+        InstallerSource::File(file) => MacosVersion::named_in(&file.file_name()?.to_string_lossy()),
+        InstallerSource::Apple => None,
+    }
 }
 
 fn collect(controls: Controls) -> NewVm {
@@ -281,7 +302,11 @@ fn collect(controls: Controls) -> NewVm {
 fn overview_text(new: &NewVm) -> String {
     let installer = match &new.source {
         InstallerSource::Apple => "downloaded from Apple, about 700 megabytes".to_string(),
-        InstallerSource::File(file) => format!("the file {}", file.display()),
+        InstallerSource::File(file) => match installer_image::inspect(file) {
+            Ok(installer_image::Layout::Dmg) => format!("the file {}, unpacked into the virtual machine's folder", file.display()),
+            // Installers of many gigabytes are not copied, so the file has to stay put.
+            _ => format!("the file {}, used where it is; leave it there until macOS is installed", file.display()),
+        },
     };
     let install = if new.easy_install { "Easy install: Orchord installs macOS by itself and tells you when it is ready. This takes a few hours." } else { "You install macOS yourself in the installer." };
     format!(

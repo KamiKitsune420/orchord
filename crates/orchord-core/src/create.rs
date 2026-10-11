@@ -10,6 +10,7 @@ use std::sync::atomic::AtomicBool;
 use anyhow::{Context, Result, bail};
 
 use crate::config::{Install, InstallStage, Vm, VmConfig};
+use crate::installer_image::{self, Layout};
 use crate::macos::MacosVersion;
 use crate::recovery;
 use crate::settings::AppSettings;
@@ -19,7 +20,9 @@ use crate::settings::AppSettings;
 pub enum InstallerSource {
     /// Download the installer for the chosen version from Apple.
     Apple,
-    /// A `BaseSystem.dmg` the user already has, or the same image already converted (`.img`).
+    /// An installer the user already has: a full installer saved as `.iso` or `.cdr`, a
+    /// `BaseSystem.dmg`, or that image already unpacked (`.img`). What the file holds decides
+    /// how it is used, not its extension; see `installer_image`.
     File(PathBuf),
 }
 
@@ -70,6 +73,9 @@ impl NewVm {
             if !file.is_file() {
                 return Some(format!("The installer file {} does not exist.", file.display()));
             }
+            if let Err(error) = installer_image::inspect(file) {
+                return Some(format!("{error:#}"));
+            }
         }
         None
     }
@@ -103,7 +109,8 @@ fn create_in(folder: &Path, new: &NewVm, settings: &AppSettings, progress: &mut 
     qemu_img(settings, &["create", "-f", "qcow2"], &[&disk], Some(&format!("{}G", new.disk_gb))).context("creating the Mac's disk")?;
 
     let media = match &new.source {
-        InstallerSource::File(file) if !has_extension(file, "dmg") => file.clone(),
+        // An image the Mac can start from is used where it is; installers run to many gigabytes.
+        InstallerSource::File(file) if installer_image::inspect(file)? != Layout::Dmg => file.clone(),
         source => {
             let dmg = match source {
                 InstallerSource::File(file) => file.clone(),
@@ -138,10 +145,6 @@ fn create_in(folder: &Path, new: &NewVm, settings: &AppSettings, progress: &mut 
     vm.config.install = Install { stage: InstallStage::NotStarted, easy: new.easy_install, media: Some(media) };
     vm.save()?;
     Ok(vm)
-}
-
-fn has_extension(path: &Path, extension: &str) -> bool {
-    path.extension().is_some_and(|found| found.eq_ignore_ascii_case(extension))
 }
 
 /// Runs `qemu-img` with `options`, then `paths`, then an optional last argument.

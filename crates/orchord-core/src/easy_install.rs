@@ -129,6 +129,7 @@ enum Rule {
     ChooseDisk,
     Continue,
     KeepInstalling,
+    StartFromBootMenu,
 }
 
 impl Driver {
@@ -194,6 +195,15 @@ impl Driver {
         let Ok(screen) = ocr::read_ppm(&self.picture) else { return };
         let seen: String = screen.text().split_whitespace().collect::<Vec<_>>().join(" ").chars().take(260).collect();
         self.diary(&format!("saw: {seen}"));
+        // OpenCore's own menu. It is never asked for, but OpenCore falls back to it when what
+        // it was told to start does not start, which happens once near the end of some
+        // installations. It is silent and waits for a key; Return starts the entry it has marked.
+        if screen.contains("OpenCore Boot Menu") {
+            if !self.repeated(Rule::StartFromBootMenu) {
+                self.press(&["ret"]);
+            }
+            return;
+        }
         match self.vm.config.install.stage {
             InstallStage::NotStarted => self.work_the_installer(&screen),
             InstallStage::Copied => self.watch_macos_install(&screen),
@@ -201,7 +211,7 @@ impl Driver {
         }
     }
 
-    /// The installer (Recovery): erase the disk, then walk through "Reinstall macOS".
+    /// The installer: erase the disk, then walk through "Reinstall macOS" or "Install macOS".
     fn work_the_installer(&mut self, screen: &ScreenText) {
         // "Are you sure you want to cancel installation?" A click meant for Continue can land
         // after the page has changed, when the button in that place has become Cancel. The
@@ -218,7 +228,7 @@ impl Driver {
         // Terminal's own menu bar has a Shell menu; that tells Terminal in front from a Terminal
         // window left behind another program, which takes no keys.
         let terminal_in_front = screen.find_exact("Shell").into_iter().any(|word| word.y < MENU_BAR_HEIGHT);
-        let main_window = screen.contains("Reinstall macOS") && screen.contains("Disk Utility");
+        let main_window = install_choice(screen).is_some() && screen.contains("Disk Utility");
         if !self.erased {
             if let Some(typed) = self.erase_typed {
                 let mistyped = ["syntax error", "command not found", "event not found", "unexpected EOF", "No such file"].iter().any(|sign| screen.contains(sign));
@@ -279,9 +289,11 @@ impl Driver {
                 self.click(screen, disk);
                 std::thread::sleep(Duration::from_millis(1500));
                 // The button under the disks reads Continue or Install, depending on the version.
-                // "Install" is also the first word of the menu bar, so only the lower half counts.
-                let lower_half = |word: &&Word| word.y > screen.height as f32 / 2.0;
-                if let Some(button) = screen.find_exact("Continue").into_iter().chain(screen.find_exact("Install")).filter(lower_half).last() {
+                // "Install" is also the first word of the menu bar and, with a full installer,
+                // of the installer's own disk shown beside the Mac's ("Install macOS Big Sur",
+                // which is locked). So only words well below the disks' names count.
+                let below_disks = |word: &&Word| word.y > disk.y + 4.0 * disk.height;
+                if let Some(button) = screen.find_exact("Continue").into_iter().chain(screen.find_exact("Install")).filter(below_disks).last() {
                     self.click(screen, button);
                 }
                 // The installation starts a few seconds later, and its Cancel button appears
@@ -292,7 +304,7 @@ impl Driver {
             self.answer(Rule::Agree, screen, button);
         } else if main_window {
             if !self.repeated(Rule::ChooseReinstall) {
-                if let Some(choice) = screen.find("Reinstall macOS") {
+                if let Some(choice) = install_choice(screen) {
                     self.click(screen, choice);
                     // A slow Mac needs a moment to move the selection; Continue pressed too soon
                     // starts whatever was selected before, which is Time Machine.
@@ -393,6 +405,7 @@ impl Driver {
                 Rule::Agree => "the licence page did not move on",
                 Rule::ChooseDisk => "the installer did not accept the Mac's disk",
                 Rule::KeepInstalling => "the installer kept asking whether to cancel",
+                Rule::StartFromBootMenu => "the Mac stayed at its boot menu instead of starting macOS",
             });
         }
         self.stood_down
@@ -424,6 +437,13 @@ impl Driver {
     fn type_text(&self, text: &str) {
         keys::type_text(&self.commands, text);
     }
+}
+
+/// The line of the installer's first window that starts the installation. The small installer
+/// from Apple's servers calls it "Reinstall macOS Big Sur"; a full installer, such as an ISO,
+/// calls it "Install macOS Big Sur", which is also what its menu bar says once it is running.
+fn install_choice(screen: &ScreenText) -> Option<&Word> {
+    screen.find("Reinstall macOS").or_else(|| screen.find_all("Install macOS").into_iter().find(|word| word.y > MENU_BAR_HEIGHT))
 }
 
 /// The licence's Agree button. The licence page has one at the bottom. Pressing it brings up

@@ -148,6 +148,16 @@ Tested with `MacOSBigSur.iso`, a 13.2 GB full installer of Big Sur 11.2 that was
 - **OpenCore's menu appeared once, uninvited.** After the fourth restart OpenCore showed its text menu, with "Macintosh HD" marked, and waited for a key; macOS had most likely asked for a one-time start from something that was gone by then, and OpenCore falls back to its menu when a start fails. The next start went straight into macOS. Easy install now presses Return when it reads "OpenCore Boot Menu". That was proved by switching the menu on in a copy of the boot folder: Return started macOS, and the Mac reached the set-up screen. Someone installing by hand would have to press Return there themselves; nothing speaks at that menu.
 - **Limits.** The ISO is used where it is, so it must stay there until macOS is installed. Its folder and name must be plain English letters, digits and punctuation, because of how QEMU on Windows reads the description file. Only the Big Sur ISO was tested; Monterey and Sequoia ISOs have the same shape but were not tried.
 
+### First release (11 October 2026)
+
+- **A new user could not set Orchord up without editing a file.** There is now an Orchord Settings dialog (File menu, Control+Comma) for the QEMU folder, the folder for virtual machines and the Apple SMC key, and every "not fully set up" message says where it is. It refuses a folder with no QEMU in it and a key that is not 64 characters long.
+- **The boot folder beside the program is no longer written into the settings file,** so an unzipped copy of Orchord can be moved or replaced by a newer one.
+- **The program needs the Microsoft Visual C++ Redistributable.** `orchord.exe` loads `VCRUNTIME140.dll`, `VCRUNTIME140_1.dll` and `MSVCP140.dll`. Most PCs have them; the README says how to get them.
+- **The release zip was tested as a stranger would meet it.** Unzipped into an empty folder and run with an empty settings folder, it reported what was missing, took the settings through the dialog and saved them. Run with the real settings, it started the installed Monterey and reached its set-up screen in 55 seconds.
+- **Shut Down from the Power menu does nothing at macOS's first set-up screen.** The Mac was still running 75 seconds later; Force Power Off stopped it.
+- **VoodooPS2Controller's licence was misdescribed.** Its repository's licence file is the Apple Public Source License 2.0, not GPL-2.0; the VoodooInput it carries is GPL-2.0. The licence texts of every bundled part are now in the repository and in the zip.
+- **Before the repository was made public its whole history was searched.** The Apple SMC key, the owner's email address and access tokens appear nowhere in it; commits carry GitHub's no-reply address.
+
 ## Recommendations at a glance
 
 - Engine: QEMU 11.x or newer with `-accel whpx`, started headless and controlled over QMP. Do not write an emulator or hypervisor from scratch.

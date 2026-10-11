@@ -22,7 +22,7 @@ use orchord_core::{AppSettings, InstallStage, POINTER_MAX, PointerButton, StopRe
 use wxdragon::prelude::*;
 use wxdragon::widgets::GenericStaticBitmap;
 
-use crate::{keyboard_capture, settings_dialog, speech, usb_dialog, wizard};
+use crate::{keyboard_capture, program_settings, settings_dialog, speech, usb_dialog, wizard};
 
 const ID_NEW_VM: Id = ID_HIGHEST + 1;
 const ID_START: Id = ID_HIGHEST + 2;
@@ -40,6 +40,9 @@ const ID_OPEN_SHARED: Id = ID_HIGHEST + 16;
 const ID_CONNECT_SHARED: Id = ID_HIGHEST + 17;
 const ID_USB: Id = ID_HIGHEST + 18;
 const ID_RIGHT_CONTROL: Id = ID_HIGHEST + 19;
+const ID_PROGRAM_SETTINGS: Id = ID_HIGHEST + 20;
+/// Added to every message about Orchord not being set up, so the user knows where to fix it.
+const SETTINGS_HINT: &str = "Open Orchord Settings in the File menu, or press Control+Comma.";
 
 const EMPTY_LIST_TEXT: &str = "No virtual machines created yet. To create one, go to File > New Virtual Machine, or press Control plus N.";
 const TICK_MS: i32 = 250;
@@ -206,6 +209,7 @@ pub fn show() {
             ID_SETTINGS => edit_selected(ui, &state),
             ID_OPEN_FOLDER => open_selected_folder(ui, &state),
             ID_REFRESH => reload(ui, &state),
+            ID_PROGRAM_SETTINGS => program_settings(ui, &state),
             ID_CAPTURE => capture_keyboard(ui, &state),
             ID_TOGGLE_LOG => toggle_log(ui, &state),
             ID_OPEN_SHARED => open_shared_folder(ui, &state),
@@ -269,6 +273,7 @@ fn build_menu_bar() -> MenuBar {
     let file = Menu::builder()
         .append_item(ID_NEW_VM, "&New Virtual Machine...\tCtrl+N", "Create a new virtual machine")
         .append_item(ID_REFRESH, "&Refresh List\tF5", "Read the list of virtual machines again")
+        .append_item(ID_PROGRAM_SETTINGS, "&Orchord Settings...\tCtrl+,", "Where QEMU is installed, where virtual machines are kept, and the Apple SMC key")
         .append_separator()
         .append_item(ID_EXIT, "E&xit\tAlt+F4", "Close Orchord")
         .build();
@@ -389,7 +394,7 @@ fn fill_list(list: ListBox, state: &State) {
 
 fn report_setup_problems(frame: Frame, state: &State) {
     match state.settings.problems().first() {
-        Some(problem) => say(frame, &format!("Orchord is not fully set up. {problem}")),
+        Some(problem) => say(frame, &format!("Orchord is not fully set up. {problem} {SETTINGS_HINT}")),
         None if state.rows.len() == 1 => say(frame, "1 virtual machine."),
         None => say(frame, &format!("{} virtual machines.", state.rows.len())),
     }
@@ -658,6 +663,32 @@ fn open_selected_folder(ui: Ui, state: &Shared) {
     }
 }
 
+/// File > Orchord Settings: where QEMU is, where virtual machines are kept, and the Apple SMC key.
+fn program_settings(ui: Ui, state: &Shared) {
+    // The dialog runs its own event loop, in which the timer ticks; nothing may stay borrowed.
+    let current = state.borrow().settings.clone();
+    let Some(changed) = program_settings::edit(ui.frame, &current) else { return };
+    if let Err(error) = changed.save() {
+        show_error(ui.frame, &format!("The settings could not be saved. {error:#}"));
+        return;
+    }
+    let mut state = state.borrow_mut();
+    let moved = changed.vm_root != state.settings.vm_root;
+    state.settings = changed;
+    if moved && state.rows.iter().any(Row::is_active) {
+        say(ui.frame, "Settings saved. The list will show the new folder's virtual machines once the running one has stopped and you press F5.");
+        return;
+    }
+    if moved {
+        state.rows = list_vms(&state.settings.vm_root, &state.settings.other_vms).into_iter().map(Row::new).collect();
+        fill_list(ui.list, &state);
+    }
+    match state.settings.problems().first() {
+        Some(problem) => say(ui.frame, &format!("Settings saved, but Orchord is still not fully set up. {problem}")),
+        None => say(ui.frame, "Settings saved."),
+    }
+}
+
 fn reload(ui: Ui, state: &Shared) {
     let mut state = state.borrow_mut();
     if state.rows.iter().any(Row::is_active) {
@@ -705,7 +736,7 @@ fn new_vm(ui: Ui, state: &Shared) {
     }
     let settings = state.borrow().settings.clone();
     if let Some(problem) = settings.problems().first() {
-        show_error(ui.frame, &format!("Orchord is not fully set up, so it cannot create a virtual machine yet. {problem}"));
+        show_error(ui.frame, &format!("Orchord is not fully set up, so it cannot create a virtual machine yet. {problem} {SETTINGS_HINT}"));
         return;
     }
     let Some(answers) = wizard::run(ui.frame, &settings) else { return };

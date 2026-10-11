@@ -1,0 +1,170 @@
+# Rust crates built into Orchord
+
+Orchord's program file contains these crates from crates.io, each under the licence its
+authors chose. The list is made with:
+
+```
+cargo tree --workspace -e normal --target x86_64-pc-windows-msvc --prefix none --format "{p}|{l}|{r}"
+```
+
+Each line gives the crate and version, its licence, and where its source and licence text are.
+
+- adler2 v2.0.1: 0BSD OR MIT OR Apache-2.0. https://github.com/oyvindln/adler2
+- allocator-api2 v0.2.21: MIT OR Apache-2.0. https://github.com/zakarumych/allocator-api2
+- anyhow v1.0.104: MIT OR Apache-2.0. https://github.com/dtolnay/anyhow
+- atomic-waker v1.1.2: Apache-2.0 OR MIT. https://github.com/smol-rs/atomic-waker
+- base64 v0.22.1: MIT OR Apache-2.0. https://github.com/marshallpierce/rust-base64
+- base64 v0.23.1: MIT OR Apache-2.0. https://github.com/marshallpierce/rust-base64
+- bitflags v2.13.2: MIT OR Apache-2.0. https://github.com/bitflags/bitflags
+- block-buffer v0.10.4: MIT OR Apache-2.0. https://github.com/RustCrypto/utils
+- bytes v1.12.1: MIT. https://github.com/tokio-rs/bytes
+- cfg-if v1.0.5: MIT OR Apache-2.0. https://github.com/rust-lang/cfg-if
+- chrono v0.4.45: MIT OR Apache-2.0. https://github.com/chronotope/chrono
+- cpufeatures v0.2.17: MIT OR Apache-2.0. https://github.com/RustCrypto/utils
+- crc32fast v1.5.2: MIT OR Apache-2.0. https://github.com/srijs/rust-crc32fast
+- crypto-common v0.1.7: MIT OR Apache-2.0. https://github.com/RustCrypto/traits
+- dav-server v0.11.0: Apache-2.0. https://github.com/messense/dav-server-rs
+- deranged v0.5.8: MIT OR Apache-2.0. https://github.com/jhpratt/deranged
+- derive-where v1.7.0: MIT OR Apache-2.0. https://github.com/ModProg/derive-where
+- digest v0.10.7: MIT OR Apache-2.0. https://github.com/RustCrypto/traits
+- displaydoc v0.2.7: MIT OR Apache-2.0. https://github.com/yaahc/displaydoc
+- dyn-clone v1.0.20: MIT OR Apache-2.0. https://github.com/dtolnay/dyn-clone
+- equivalent v1.0.2: Apache-2.0 OR MIT. https://github.com/indexmap-rs/equivalent
+- flate2 v1.1.10: MIT OR Apache-2.0. https://github.com/rust-lang/flate2-rs
+- foldhash v0.2.0: Zlib. https://github.com/orlp/foldhash
+- form_urlencoded v1.2.2: MIT OR Apache-2.0. https://github.com/servo/rust-url
+- futures-channel v0.3.34: MIT OR Apache-2.0. https://github.com/rust-lang/futures-rs
+- futures-core v0.3.34: MIT OR Apache-2.0. https://github.com/rust-lang/futures-rs
+- futures-task v0.3.34: MIT OR Apache-2.0. https://github.com/rust-lang/futures-rs
+- futures-util v0.3.34: MIT OR Apache-2.0. https://github.com/rust-lang/futures-rs
+- generic-array v0.14.7: MIT. https://github.com/fizyk20/generic-array.git
+- getrandom v0.2.17: MIT OR Apache-2.0. https://github.com/rust-random/getrandom
+- getrandom v0.4.3: MIT OR Apache-2.0. https://github.com/rust-random/getrandom
+- hashbrown v0.16.1: MIT OR Apache-2.0. https://github.com/rust-lang/hashbrown
+- hashbrown v0.17.1: MIT OR Apache-2.0. https://github.com/rust-lang/hashbrown
+- headers v0.4.2: MIT. https://github.com/hyperium/headers
+- headers-core v0.3.0: MIT. https://github.com/hyperium/headers
+- htmlescape v0.3.1: Apache-2.0 / MIT / MPL-2.0. https://github.com/veddan/rust-htmlescape
+- http v1.5.0: MIT OR Apache-2.0. https://github.com/hyperium/http
+- httparse v1.10.1: MIT OR Apache-2.0. https://github.com/seanmonstar/httparse
+- http-body v1.1.0: MIT. https://github.com/hyperium/http-body
+- http-body-util v0.1.5: MIT. https://github.com/hyperium/http-body
+- httpdate v1.0.3: MIT OR Apache-2.0. https://github.com/pyfisch/httpdate
+- hyper v1.12.0: MIT. https://github.com/hyperium/hyper
+- hyper-util v0.1.21: MIT. https://github.com/hyperium/hyper-util
+- icu_collections v2.3.0: Unicode-3.0. https://github.com/unicode-org/icu4x
+- icu_locale_core v2.3.0: Unicode-3.0. https://github.com/unicode-org/icu4x
+- icu_normalizer v2.3.0: Unicode-3.0. https://github.com/unicode-org/icu4x
+- icu_normalizer_data v2.3.0: Unicode-3.0. https://github.com/unicode-org/icu4x
+- icu_properties v2.3.0: Unicode-3.0. https://github.com/unicode-org/icu4x
+- icu_properties_data v2.3.0: Unicode-3.0. https://github.com/unicode-org/icu4x
+- icu_provider v2.3.1: Unicode-3.0. https://github.com/unicode-org/icu4x
+- idna v1.1.0: MIT OR Apache-2.0. https://github.com/servo/rust-url/
+- idna_adapter v1.2.2: Apache-2.0 OR MIT. https://github.com/hsivonen/idna_adapter
+- indexmap v2.14.2: Apache-2.0 OR MIT. https://github.com/indexmap-rs/indexmap
+- itoa v1.0.18: MIT OR Apache-2.0. https://github.com/dtolnay/itoa
+- libc v0.2.190: MIT OR Apache-2.0. https://github.com/rust-lang/libc
+- litemap v0.8.3: Unicode-3.0. https://github.com/unicode-org/icu4x
+- lock_api v0.4.14: MIT OR Apache-2.0. https://github.com/Amanieu/parking_lot
+- log v0.4.34: MIT OR Apache-2.0. https://github.com/rust-lang/log
+- lru v0.16.4: MIT. https://github.com/jeromefroe/lru-rs.git
+- memchr v2.8.3: Unlicense OR MIT. https://github.com/BurntSushi/memchr
+- mime v0.3.17: MIT OR Apache-2.0. https://github.com/hyperium/mime
+- mime_guess v2.0.5: MIT. https://github.com/abonander/mime_guess
+- miniz_oxide v0.9.1: MIT OR Zlib OR Apache-2.0. https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide
+- mio v1.2.4: MIT. https://github.com/tokio-rs/mio
+- num-conv v0.2.2: MIT OR Apache-2.0. https://github.com/jhpratt/num-conv
+- num-traits v0.2.19: MIT OR Apache-2.0. https://github.com/rust-num/num-traits
+- once_cell v1.21.4: MIT OR Apache-2.0. https://github.com/matklad/once_cell
+- parking_lot v0.12.5: MIT OR Apache-2.0. https://github.com/Amanieu/parking_lot
+- parking_lot_core v0.9.12: MIT OR Apache-2.0. https://github.com/Amanieu/parking_lot
+- paste v1.0.15: MIT OR Apache-2.0. https://github.com/dtolnay/paste
+- percent-encoding v2.3.2: MIT OR Apache-2.0. https://github.com/servo/rust-url/
+- pin-project-lite v0.2.17: Apache-2.0 OR MIT. https://github.com/taiki-e/pin-project-lite
+- plist v1.10.1: MIT. https://github.com/ebarnard/rust-plist/
+- potential_utf v0.1.6: Unicode-3.0. https://github.com/unicode-org/icu4x
+- powerfmt v0.2.1: MIT OR Apache-2.0. https://github.com/jhpratt/powerfmt
+- prismer v0.1.4: MIT. https://github.com/trypsynth/prismer
+- prism-sys v0.1.4: MIT. https://github.com/trypsynth/prismer
+- proc-macro2 v1.0.107: MIT OR Apache-2.0. https://github.com/dtolnay/proc-macro2
+- quick-xml v0.42.0: MIT. https://github.com/tafia/quick-xml
+- quote v1.0.47: MIT OR Apache-2.0. https://github.com/dtolnay/quote
+- reflink-copy v0.1.30: MIT/Apache-2.0. https://github.com/cargo-bins/reflink-copy
+- ring v0.17.14: Apache-2.0 AND ISC. https://github.com/briansmith/ring
+- rustls v0.23.45: Apache-2.0 OR ISC OR MIT. https://github.com/rustls/rustls
+- rustls-pki-types v1.15.1: MIT OR Apache-2.0. https://github.com/rustls/pki-types
+- rustls-webpki v0.103.15: ISC. https://github.com/rustls/webpki
+- scopeguard v1.2.0: MIT OR Apache-2.0. https://github.com/bluss/scopeguard
+- serde v1.0.229: MIT OR Apache-2.0. https://github.com/serde-rs/serde
+- serde_core v1.0.229: MIT OR Apache-2.0. https://github.com/serde-rs/serde
+- serde_derive v1.0.229: MIT OR Apache-2.0. https://github.com/serde-rs/serde
+- serde_json v1.0.152: MIT OR Apache-2.0. https://github.com/serde-rs/json
+- serde_spanned v0.6.9: MIT OR Apache-2.0. https://github.com/toml-rs/toml
+- sha1 v0.10.7: MIT OR Apache-2.0. https://github.com/RustCrypto/hashes
+- sha2 v0.10.9: MIT OR Apache-2.0. https://github.com/RustCrypto/hashes
+- simd-adler32 v0.3.10: MIT. https://github.com/mcountryman/simd-adler32
+- slab v0.4.12: MIT. https://github.com/tokio-rs/slab
+- smallvec v1.16.2: MIT OR Apache-2.0. https://github.com/servo/rust-smallvec
+- socket2 v0.6.5: MIT OR Apache-2.0. https://github.com/rust-lang/socket2
+- stable_deref_trait v1.2.1: MIT OR Apache-2.0. https://github.com/storyyeller/stable_deref_trait
+- subtle v2.6.1: BSD-3-Clause. https://github.com/dalek-cryptography/subtle
+- syn v2.0.119: MIT OR Apache-2.0. https://github.com/dtolnay/syn
+- syn v3.0.6: MIT OR Apache-2.0. https://github.com/dtolnay/syn
+- synstructure v0.14.0: MIT. https://github.com/mystor/synstructure
+- time v0.3.55: MIT OR Apache-2.0. https://github.com/time-rs/time
+- time-core v0.1.9: MIT OR Apache-2.0. https://github.com/time-rs/time
+- tinystr v0.8.4: Unicode-3.0. https://github.com/unicode-org/icu4x
+- tokio v1.53.2: MIT. https://github.com/tokio-rs/tokio
+- tokio-macros v2.7.2: MIT. https://github.com/tokio-rs/tokio
+- toml v0.8.23: MIT OR Apache-2.0. https://github.com/toml-rs/toml
+- toml_datetime v0.6.11: MIT OR Apache-2.0. https://github.com/toml-rs/toml
+- toml_edit v0.22.27: MIT OR Apache-2.0. https://github.com/toml-rs/toml
+- toml_write v0.1.2: MIT OR Apache-2.0. https://github.com/toml-rs/toml
+- typenum v1.20.1: MIT OR Apache-2.0. https://github.com/paholg/typenum
+- unicase v2.10.0: MIT OR Apache-2.0. https://github.com/seanmonstar/unicase
+- unicode-ident v1.0.26: (MIT OR Apache-2.0) AND Unicode-3.0. https://github.com/dtolnay/unicode-ident
+- untrusted v0.9.0: ISC. https://github.com/briansmith/untrusted
+- ureq v2.12.1: MIT OR Apache-2.0. https://github.com/algesten/ureq
+- url v2.5.8: MIT OR Apache-2.0. https://github.com/servo/rust-url
+- utf8_iter v1.0.4: Apache-2.0 OR MIT. https://github.com/hsivonen/utf8_iter
+- uuid v1.28.0: Apache-2.0 OR MIT. https://github.com/uuid-rs/uuid
+- webpki-roots v0.26.11: CDLA-Permissive-2.0. https://github.com/rustls/webpki-roots
+- webpki-roots v1.0.9: CDLA-Permissive-2.0. https://github.com/rustls/webpki-roots
+- windows v0.58.0: MIT OR Apache-2.0. https://github.com/microsoft/windows-rs
+- windows v0.62.2: MIT OR Apache-2.0. https://github.com/microsoft/windows-rs
+- windows_x86_64_msvc v0.52.6: MIT OR Apache-2.0. https://github.com/microsoft/windows-rs
+- windows-collections v0.3.2: MIT OR Apache-2.0. https://github.com/microsoft/windows-rs
+- windows-core v0.58.0: MIT OR Apache-2.0. https://github.com/microsoft/windows-rs
+- windows-core v0.62.2: MIT OR Apache-2.0. https://github.com/microsoft/windows-rs
+- windows-future v0.3.2: MIT OR Apache-2.0. https://github.com/microsoft/windows-rs
+- windows-implement v0.58.0: MIT OR Apache-2.0. https://github.com/microsoft/windows-rs
+- windows-implement v0.60.2: MIT OR Apache-2.0. https://github.com/microsoft/windows-rs
+- windows-interface v0.58.0: MIT OR Apache-2.0. https://github.com/microsoft/windows-rs
+- windows-interface v0.59.3: MIT OR Apache-2.0. https://github.com/microsoft/windows-rs
+- windows-link v0.2.1: MIT OR Apache-2.0. https://github.com/microsoft/windows-rs
+- windows-numerics v0.3.1: MIT OR Apache-2.0. https://github.com/microsoft/windows-rs
+- windows-result v0.2.0: MIT OR Apache-2.0. https://github.com/microsoft/windows-rs
+- windows-result v0.4.1: MIT OR Apache-2.0. https://github.com/microsoft/windows-rs
+- windows-strings v0.1.0: MIT OR Apache-2.0. https://github.com/microsoft/windows-rs
+- windows-strings v0.5.1: MIT OR Apache-2.0. https://github.com/microsoft/windows-rs
+- windows-sys v0.59.0: MIT OR Apache-2.0. https://github.com/microsoft/windows-rs
+- windows-sys v0.61.2: MIT OR Apache-2.0. https://github.com/microsoft/windows-rs
+- windows-targets v0.52.6: MIT OR Apache-2.0. https://github.com/microsoft/windows-rs
+- windows-threading v0.2.1: MIT OR Apache-2.0. https://github.com/microsoft/windows-rs
+- winnow v0.7.15: MIT. https://github.com/winnow-rs/winnow
+- writeable v0.6.4: Unicode-3.0. https://github.com/unicode-org/icu4x
+- wxdragon v0.9.22: MIT OR Apache-2.0. https://github.com/AllenDang/wxDragon
+- wxdragon-macros v0.9.22: MIT OR Apache-2.0. https://github.com/AllenDang/wxDragon
+- wxdragon-sys v0.9.22: MIT OR Apache-2.0. https://github.com/AllenDang/wxDragon
+- xml v1.4.0: MIT. https://github.com/kornelski/xml-rs
+- xml-rs v1.0.0: MIT. https://github.com/netvl/xml-rs
+- xmltree v0.12.0: MIT. https://github.com/eminence/xmltree-rs
+- yoke v0.8.3: Unicode-3.0. https://github.com/unicode-org/icu4x
+- yoke-derive v0.8.4: Unicode-3.0. https://github.com/unicode-org/icu4x
+- zerofrom v0.1.8: Unicode-3.0. https://github.com/unicode-org/icu4x
+- zerofrom-derive v0.1.8: Unicode-3.0. https://github.com/unicode-org/icu4x
+- zeroize v1.9.1: Apache-2.0 OR MIT. https://github.com/RustCrypto/utils
+- zerotrie v0.2.5: Unicode-3.0. https://github.com/unicode-org/icu4x
+- zerovec v0.11.8: Unicode-3.0. https://github.com/unicode-org/icu4x
+- zerovec-derive v0.11.6: Unicode-3.0. https://github.com/unicode-org/icu4x
+- zmij v1.0.23: MIT. https://github.com/dtolnay/zmij

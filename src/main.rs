@@ -4,6 +4,7 @@
 mod keyboard_capture;
 
 mod main_window;
+mod program_settings;
 mod settings_dialog;
 mod speech;
 mod usb_dialog;

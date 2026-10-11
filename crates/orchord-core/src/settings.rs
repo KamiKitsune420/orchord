@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 pub struct AppSettings {
     /// Folder holding `qemu-system-x86_64.exe` and `share\edk2-*.fd`.
     pub qemu_dir: PathBuf,
-    /// Folder containing the `EFI` directory OpenCore boots from.
+    /// Folder containing the `EFI` directory OpenCore boots from. The one beside the program
+    /// is not written to the settings file, so the program's folder can be moved or replaced.
+    #[serde(skip_serializing_if = "is_beside_program")]
     pub efi_dir: PathBuf,
     /// Folder that holds one sub-folder per virtual machine.
     pub vm_root: PathBuf,
@@ -27,14 +29,21 @@ pub struct AppSettings {
     pub debug_qmp_port: Option<u16>,
 }
 
+/// The boot folder travels with the program: the build puts it beside the program file.
+fn beside_program() -> PathBuf {
+    std::env::current_exe().ok().and_then(|program| program.parent().map(|folder| folder.join("opencore"))).unwrap_or_default()
+}
+
+fn is_beside_program(efi_dir: &PathBuf) -> bool {
+    *efi_dir == beside_program()
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         let documents = std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_default().join("Documents");
-        // The boot folder travels with the program: the build puts it beside the program file.
-        let beside_program = std::env::current_exe().ok().and_then(|program| program.parent().map(|folder| folder.join("opencore"))).unwrap_or_default();
         AppSettings {
             qemu_dir: PathBuf::from(r"C:\Program Files\qemu"),
-            efi_dir: beside_program,
+            efi_dir: beside_program(),
             vm_root: documents.join("Orchord Virtual Machines"),
             osk: String::new(),
             other_vms: Vec::new(),
@@ -102,7 +111,7 @@ impl AppSettings {
             problems.push(format!("No OpenCore boot folder at {}.", self.efi_dir.display()));
         }
         if self.osk.is_empty() {
-            problems.push("The Apple SMC key is not set in the settings file.".to_string());
+            problems.push("The Apple SMC key has not been entered.".to_string());
         }
         problems
     }

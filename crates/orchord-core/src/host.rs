@@ -36,8 +36,22 @@ pub fn cpu_name() -> String {
 /// QEMU by default answers such a request with a fault, which kills macOS before it has put
 /// anything on the screen. `ignore-unknown-msr` makes QEMU answer with zero instead, which is
 /// what Linux's `ignore_msrs` does for the same Macs under KVM.
+///
+/// `intercept-msr-gp` cures nothing, but it makes QEMU write down every register request the
+/// hypervisor itself refused. Those go to QEMU's log, which is in the diagnostic report, so a
+/// Mac that still does not start says exactly what stopped it.
 pub fn default_accelerator(vendor: &str) -> &'static str {
-    if vendor == "GenuineIntel" { "whpx" } else { "whpx,ignore-unknown-msr=on" }
+    if is_intel(vendor) { "whpx" } else { "whpx,ignore-unknown-msr=on,intercept-msr-gp=on" }
+}
+
+pub fn is_intel(vendor: &str) -> bool {
+    vendor == "GenuineIntel"
+}
+
+/// The name of the boot folder for a processor from `vendor`, beside the program. The one
+/// for other processors differs in its configuration only; see `orchord-efi`.
+pub fn boot_folder_name(vendor: &str) -> &'static str {
+    if is_intel(vendor) { "opencore" } else { "opencore-amd" }
 }
 
 /// The processor model QEMU is asked for, given the one a macOS version wants and who made
@@ -118,7 +132,8 @@ mod tests {
     #[test]
     fn only_an_intel_processor_gets_the_plain_accelerator() {
         assert_eq!(default_accelerator("GenuineIntel"), "whpx");
-        assert_eq!(default_accelerator("AuthenticAMD"), "whpx,ignore-unknown-msr=on");
+        assert_eq!(default_accelerator("AuthenticAMD"), "whpx,ignore-unknown-msr=on,intercept-msr-gp=on");
+        assert_eq!((super::boot_folder_name("GenuineIntel"), super::boot_folder_name("AuthenticAMD")), ("opencore", "opencore-amd"));
     }
 
     #[test]

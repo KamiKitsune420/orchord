@@ -2,7 +2,7 @@
 //!
 //! Usage:
 //!   orchord-vm <vm-folder> [--debug-qmp <port>] [--install-media <image>] [--qemu-arg <argument>]...
-//!   orchord-vm new <name> <location> <big-sur|monterey|sequoia> <apple|installer-file> [--easy]
+//!   orchord-vm new <name> <location> <big-sur|monterey|sonoma|sequoia> <apple|installer-file> [--easy]
 //!   orchord-vm read <screen.ppm>      prints the text recognised on a picture of a Mac's screen
 //!   orchord-vm smc-key                says whether each public source still holds the Apple SMC key
 //!   orchord-vm check                  says whether this PC has what a Mac needs, changing nothing
@@ -20,7 +20,7 @@ use anyhow::{Context, Result, bail};
 use orchord_core::create::{self, InstallerSource, NewVm};
 use orchord_core::{AppSettings, InstallStage, MacosVersion, StopReason, Supervisor, Vm, VmEvent, easy_install};
 
-const USAGE: &str = "usage: orchord-vm <vm-folder> [--debug-qmp <port>] [--install-media <image>] [--qemu-arg <argument>]...\n       orchord-vm new <name> <location> <big-sur|monterey|sequoia> <apple|installer-file> [--easy]";
+const USAGE: &str = "usage: orchord-vm <vm-folder> [--debug-qmp <port>] [--install-media <image>] [--qemu-arg <argument>]...\n       orchord-vm new <name> <location> <big-sur|monterey|sonoma|sequoia> <apple|installer-file> [--easy]";
 
 fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
@@ -108,6 +108,7 @@ fn create_vm(settings: &AppSettings, args: Vec<String>) -> Result<()> {
     let macos = match version.as_str() {
         "big-sur" => MacosVersion::BigSur,
         "monterey" => MacosVersion::Monterey,
+        "sonoma" => MacosVersion::Sonoma,
         "sequoia" => MacosVersion::Sequoia,
         _ => bail!("unknown macOS version {version}"),
     };

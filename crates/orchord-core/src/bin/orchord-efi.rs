@@ -5,7 +5,8 @@
 //! - `<opencore-release-folder>` is an unpacked OpenCore release (it holds `X64` and `Docs`).
 //! - `<kexts-folder>` holds `Lilu.kext`, `VirtualSMC.kext`, `WhateverGreen.kext` and
 //!   `VoodooPS2Controller.kext`, unpacked from their acidanthera releases.
-//! - `<output-folder>` receives an `EFI` folder, replacing one that is there.
+//! - `<output-folder>` receives an `EFI` folder, replacing one that is there, and beside it
+//!   `config-amd.plist`, the configuration for PCs whose processor is not Intel's.
 //!
 //! The configuration is OpenCore's own `Docs\Sample.plist` with the changes below applied.
 //! Each change is one this project found necessary, or harmless and tidy, when booting macOS
@@ -52,7 +53,55 @@ fn main() -> Result<()> {
     configure(config.as_dictionary_mut().context("Sample.plist is not a dictionary")?)?;
     config.to_file_xml(oc.join("config.plist")).context("writing config.plist")?;
     println!("built {}", efi.display());
+
+    // The same configuration with the changes a processor that is not Intel's needs. It sits
+    // beside the boot folder; the program's build puts it into a second copy of the folder.
+    configure_for_other_processors(config.as_dictionary_mut().context("Sample.plist is not a dictionary")?)?;
+    let other = output.join(OTHER_PROCESSORS_CONFIG);
+    config.to_file_xml(&other).context("writing the configuration for other processors")?;
+    println!("built {}", other.display());
     Ok(())
+}
+
+const OTHER_PROCESSORS_CONFIG: &str = "config-amd.plist";
+
+/// What a Mac on a processor that is not Intel's needs on top of `configure`.
+///
+/// QEMU tells the Mac its processor is an Intel one, and the Mac's kernel then does what it
+/// does on Intel processors. Nearly all of that works on others too, and QEMU can be told to
+/// answer requests for registers it does not know (`host::default_accelerator`). One thing it
+/// cannot paper over: early in its start the kernel writes zero to register 8Bh, to read the
+/// processor's microcode version afterwards. An Intel processor accepts the write. An AMD
+/// processor has that register read-only and answers with a fault, the hypervisor passes the
+/// fault on, and the kernel, which at that point cannot survive one, stops before it has
+/// drawn anything. Builders of AMD PCs that run macOS remove the same write. Here the write
+/// instruction is replaced by two instructions that do nothing; the version read afterwards
+/// is then simply whatever the processor says.
+fn configure_for_other_processors(config: &mut Dictionary) -> Result<()> {
+    // mov ecx, 8Bh; xor eax, eax; xor edx, edx; wrmsr
+    const WRITE_ZERO_TO_8B: [u8; 11] = [0xB9, 0x8B, 0x00, 0x00, 0x00, 0x31, 0xC0, 0x31, 0xD2, 0x0F, 0x30];
+    // The same with the wrmsr replaced by nop; nop.
+    const NO_WRITE: [u8; 11] = [0xB9, 0x8B, 0x00, 0x00, 0x00, 0x31, 0xC0, 0x31, 0xD2, 0x90, 0x90];
+    set(config, &["Kernel", "Patch"], Value::Array(vec![kernel_patch("Do not write to register 8Bh, which is read-only on AMD processors", &WRITE_ZERO_TO_8B, &NO_WRITE)]))
+}
+
+fn kernel_patch(comment: &str, find: &[u8], replace: &[u8]) -> Value {
+    let mut entry = Dictionary::new();
+    entry.insert("Arch".to_string(), "x86_64".into());
+    entry.insert("Base".to_string(), "".into());
+    entry.insert("Comment".to_string(), comment.into());
+    entry.insert("Count".to_string(), 1.into());
+    entry.insert("Enabled".to_string(), true.into());
+    entry.insert("Find".to_string(), Value::Data(find.to_vec()));
+    entry.insert("Identifier".to_string(), "kernel".into());
+    entry.insert("Limit".to_string(), 0.into());
+    entry.insert("Mask".to_string(), Value::Data(Vec::new()));
+    entry.insert("MaxKernel".to_string(), "".into());
+    entry.insert("MinKernel".to_string(), "".into());
+    entry.insert("Replace".to_string(), Value::Data(replace.to_vec()));
+    entry.insert("ReplaceMask".to_string(), Value::Data(Vec::new()));
+    entry.insert("Skip".to_string(), 0.into());
+    Value::Dictionary(entry)
 }
 
 /// Applies Orchord's changes to OpenCore's sample configuration.

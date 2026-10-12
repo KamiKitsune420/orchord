@@ -18,6 +18,10 @@ Copy-Item "$repo\target\release\orchord.exe", "$repo\third_party\prism\bin\prism
 # The boot folder comes from the repository, not from the build folder, so it is exactly what was committed.
 $null = New-Item -ItemType Directory -Path "$stage\opencore"
 Copy-Item "$repo\third_party\opencore\EFI" "$stage\opencore\EFI" -Recurse
+# The boot folder for processors that are not Intel's: the same files, another configuration.
+$null = New-Item -ItemType Directory -Path "$stage\opencore-amd"
+Copy-Item "$repo\third_party\opencore\EFI" "$stage\opencore-amd\EFI" -Recurse
+Copy-Item "$repo\third_party\opencore\config-amd.plist" "$stage\opencore-amd\EFI\OC\config.plist" -Force
 Copy-Item "$repo\third_party\prism\LICENSES\*" "$stage\licences\prism" -Recurse
 Copy-Item "$repo\third_party\prism\README.md" "$stage\licences\prism\README.md"
 Copy-Item "$repo\third_party\opencore\LICENSES\*" "$stage\licences\opencore"

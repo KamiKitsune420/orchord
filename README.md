@@ -97,11 +97,14 @@ responsive; animation is not.
 ## Known limits
 
 - Everything above was tested on that one Intel laptop.
-- **AMD processors do not work yet, as far as is known.** On an AMD PC, versions up to 0.1.1
-  stop on a black screen of start-up text. From 0.1.2 Orchord starts Macs differently on a
-  processor that is not Intel's (see `host.rs`), which is the likeliest cure but has not
-  been tried on an AMD PC. If a Mac does not start on yours, a diagnostic report (Machine
-  menu) sent in an issue would help a great deal.
+- **AMD processors do not work yet.** On an AMD PC a Mac stops on a black screen of start-up
+  text: macOS dies in its first moments. 0.1.2 made QEMU answer requests for registers only
+  Intel processors have, and that was not enough. 0.1.3 adds a second boot folder,
+  `opencore-amd`, used when the processor is not Intel's, which takes one write out of the
+  Mac's kernel that AMD processors refuse; and it makes QEMU write every refused register
+  request into its log. None of this could be tried here, where the only PC is an Intel one.
+  If a Mac does not start on your AMD PC, a diagnostic report (Machine menu) attached to an
+  issue shows exactly what stopped it.
 - Easy install has run from start to finish for Big Sur, from Apple's download and from an
   ISO. For Monterey and Sequoia only its first stage has been run.
 - Handing a USB device to a Mac has not worked yet: it needs the UsbDk driver, which was not
@@ -131,8 +134,8 @@ The button changes nothing without a Yes from you.
 ## Getting started
 
 1. Download `Orchord-<version>-windows-x64.zip` from the Releases page and unzip it anywhere.
-   Keep the files together: `prism.dll` and the `opencore` folder must stay beside
-   `orchord.exe`.
+   Keep the files together: `prism.dll` and the `opencore` and `opencore-amd` folders must
+   stay beside `orchord.exe`.
 2. Start `orchord.exe`. The first time, it says that it is not fully set up.
 3. Open File, Orchord Settings (Control+Comma). The first button there is "Check and set up
    this PC". Press it and answer its questions; it ends by saying whether the PC is ready.

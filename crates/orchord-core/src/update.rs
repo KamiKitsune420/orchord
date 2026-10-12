@@ -215,11 +215,11 @@ fn old_name(file: &Path) -> PathBuf {
 
 /// Removes what an earlier update moved out of the way in `folder`. Called when Orchord
 /// starts, by which time the program those files belonged to has ended. Only files with the
-/// ending an update gives them are removed, in the folder itself and in the two folders an
+/// ending an update gives them are removed, in the folder itself and in the folders an
 /// update brings with it.
 pub fn remove_leftovers(folder: &Path) {
     remove_old_files(folder, false);
-    for name in ["opencore", "licences"] {
+    for name in ["opencore", "opencore-amd", "licences"] {
         remove_old_files(&folder.join(name), true);
     }
 }

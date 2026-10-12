@@ -51,9 +51,11 @@ pub enum Appearance {
     Dark,
 }
 
-/// The boot folder travels with the program: the build puts it beside the program file.
+/// The boot folder travels with the program: the build puts it beside the program file,
+/// once for Intel processors and once for the others.
 fn beside_program() -> PathBuf {
-    std::env::current_exe().ok().and_then(|program| program.parent().map(|folder| folder.join("opencore"))).unwrap_or_default()
+    let name = crate::host::boot_folder_name(&crate::host::cpu_vendor());
+    std::env::current_exe().ok().and_then(|program| program.parent().map(|folder| folder.join(name))).unwrap_or_default()
 }
 
 fn is_beside_program(efi_dir: &PathBuf) -> bool {

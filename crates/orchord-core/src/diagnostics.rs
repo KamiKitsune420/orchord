@@ -7,10 +7,13 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::mpsc::{self, Sender};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 
 use crate::config::Vm;
+use crate::supervisor::VmCommand;
 use crate::installer_image::InstallMedia;
 use crate::qemu::{LaunchOptions, build_args};
 use crate::settings::AppSettings;
@@ -18,15 +21,50 @@ use crate::{host, ocr, setup, smc_key};
 
 pub const REPORT_FILE: &str = "Orchord diagnostic report.txt";
 const HIDDEN: &str = "(hidden)";
+const QEMU_ANSWER_LIMIT: Duration = Duration::from_secs(15);
+const SECOND_LOOK_AFTER: Duration = Duration::from_millis(1500);
 
-/// Writes the report into the virtual machine's folder and returns where it is.
-pub fn save(vm: &Vm, settings: &AppSettings) -> Result<PathBuf> {
+/// Writes the report into the virtual machine's folder and returns where it is. `running` is
+/// the command channel of the Mac's supervisor while the Mac runs; with it the report also
+/// says what the Mac's processors are doing at that moment.
+pub fn save(vm: &Vm, settings: &AppSettings, running: Option<&Sender<VmCommand>>) -> Result<PathBuf> {
     let path = vm.dir.join(REPORT_FILE);
-    std::fs::write(&path, report(vm, settings)).with_context(|| format!("writing {}", path.display()))?;
+    std::fs::write(&path, report(vm, settings, running)).with_context(|| format!("writing {}", path.display()))?;
     Ok(path)
 }
 
-pub fn report(vm: &Vm, settings: &AppSettings) -> String {
+/// Asks the running Mac's QEMU a question in the language of its monitor.
+fn ask_qemu(running: &Sender<VmCommand>, question: &str) -> String {
+    let (reply, answer) = mpsc::channel();
+    let command = VmCommand::Qmp { execute: "human-monitor-command".to_string(), arguments: Some(serde_json::json!({ "command-line": question })), reply };
+    if running.send(command).is_err() {
+        return "the Mac had stopped".to_string();
+    }
+    match answer.recv_timeout(QEMU_ANSWER_LIMIT) {
+        Ok(Ok(value)) => value.as_str().map_or_else(|| value.to_string(), str::to_string),
+        Ok(Err(error)) => format!("QEMU would not say: {error}"),
+        Err(_) => "QEMU did not answer".to_string(),
+    }
+}
+
+/// Where each of the Mac's processors is and what state it is in, taken twice a little apart.
+/// A Mac that is stuck is either standing still or going round in a small circle, and the
+/// address it is at says in what: the firmware, the boot loader or macOS itself.
+fn processor_state(running: &Sender<VmCommand>) -> String {
+    let mut text = String::new();
+    for question in ["info status", "info cpus", "info registers -a"] {
+        text.push_str(&format!("--- {question}\n{}\n", ask_qemu(running, question).trim_end()));
+    }
+    std::thread::sleep(SECOND_LOOK_AFTER);
+    let again = ask_qemu(running, "info registers -a");
+    let places: Vec<&str> = again.lines().filter(|line| line.starts_with("CPU#") || line.contains("RIP=")).collect();
+    text.push_str(&format!("--- where each processor was {} milliseconds later\n{}\n", SECOND_LOOK_AFTER.as_millis(), places.join("\n")));
+    // The instructions the first processor is at, as bytes.
+    text.push_str(&format!("--- x /48xb $pc\n{}\n", ask_qemu(running, "x /48xb $pc").trim_end()));
+    text
+}
+
+pub fn report(vm: &Vm, settings: &AppSettings, running: Option<&Sender<VmCommand>>) -> String {
     let mut text = String::new();
     let mut section = |title: &str, body: String| {
         text.push_str(&format!("== {title} ==\r\n{}\r\n\r\n", body.trim_end().replace("\r\n", "\n").replace('\n', "\r\n")));
@@ -49,7 +87,15 @@ pub fn report(vm: &Vm, settings: &AppSettings) -> String {
     let arguments = build_args(vm, settings, &LaunchOptions { install_media, ..Default::default() });
     section("How QEMU is started", arguments.iter().map(|argument| argument.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" "));
 
+    section(
+        "What the Mac's processors were doing",
+        match running {
+            Some(running) => processor_state(running),
+            None => "The Mac was not running when this report was made. To show where a Mac is stuck, make the report while it is stuck.".to_string(),
+        },
+    );
     section("QEMU's log, the end", ends(&read_text(&vm.qemu_log_path()), 0, 40));
+    section("The firmware's log, the end", ends(&read_text(&vm.firmware_log_path()), 0, 160));
     section("The Mac's serial log, start and end", ends(&read_text(&vm.serial_log_path()), 30, 150));
     section("Easy install's log, the end", ends(&read_text(&vm.config_dir().join("easy-install.log")), 0, 40));
     let picture = ["screen.ppm", "install-screen.ppm"].iter().map(|name| vm.config_dir().join(name)).find(|path| path.is_file());
@@ -122,7 +168,7 @@ mod tests {
         vm.save().unwrap();
         // A QEMU folder that is not there keeps the test from starting any program.
         let settings = AppSettings { osk: key.clone(), qemu_dir: dir.join("no-qemu"), ..AppSettings::default() };
-        let text = report(&vm, &settings);
+        let text = report(&vm, &settings, None);
         assert!(!text.contains(&key));
         assert!(text.contains("isa-applesmc,osk=(hidden)"), "the start-up line is there with the key hidden");
         assert!(text.contains("Report Test") && text.contains("Maker: "));

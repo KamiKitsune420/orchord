@@ -98,6 +98,10 @@ pub fn build_args(vm: &Vm, settings: &AppSettings, options: &LaunchOptions) -> V
     }
     // Everything after "file:" is the name, commas included, so this one is not doubled.
     arg("-serial", format!("file:{}", vm.serial_log_path().display()));
+    // The firmware's own log. The firmware QEMU comes with writes what it is doing to port
+    // 402h; when a Mac stops before macOS has started, this is the only account of where.
+    arg("-debugcon", format!("file:{}", vm.firmware_log_path().display()));
+    arg("-global", "isa-debugcon.iobase=0x402".into());
 
     args.extend(options.extra_args.iter().cloned());
     args.into_iter().map(OsString::from).collect()

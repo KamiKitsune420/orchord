@@ -130,6 +130,12 @@ impl Vm {
         self.config_dir().join("serial.log")
     }
 
+    /// What the firmware writes about itself as it starts the Mac. QEMU's firmware is a
+    /// debugging build and says a great deal; this is where it is kept.
+    pub fn firmware_log_path(&self) -> PathBuf {
+        self.config_dir().join("firmware.log")
+    }
+
     pub fn qemu_log_path(&self) -> PathBuf {
         self.config_dir().join("qemu.log")
     }

@@ -78,6 +78,11 @@ File Explorer. It holds the PC's processor, the QEMU version, how the Mac is sta
 ends of its logs, which is what someone helping from afar needs. It does not hold the Apple
 SMC key; it does hold folder names, which may include your Windows user name.
 
+Make the report **while the Mac is stuck**, not after powering it off: only then can it
+also say what each of the Mac's processors is doing at that moment, which shows where it
+stopped. The logs it draws on are in the Mac's `vmconfig` folder: `firmware.log` (the
+firmware, up to the hand-over to macOS), `serial.log` (macOS itself) and `qemu.log`.
+
 ## macOS versions
 
 Tested on an Intel Core i7-1355U laptop:

@@ -51,7 +51,7 @@ fn main() -> Result<()> {
     if first == "report" {
         // What Machine > Save Diagnostic Report writes, without opening File Explorer.
         let folder = args.next().context("report needs a virtual machine's folder")?;
-        println!("{}", orchord_core::diagnostics::save(&Vm::load(&PathBuf::from(folder))?, &settings)?.display());
+        println!("{}", orchord_core::diagnostics::save(&Vm::load(&PathBuf::from(folder))?, &settings, None)?.display());
         return Ok(());
     }
     if first == "smc-key" {
@@ -68,18 +68,40 @@ fn main() -> Result<()> {
     let name = vm.config.name.clone();
     let easy = vm.config.install.easy && vm.config.install.stage != InstallStage::Done;
     let mut supervisor = Supervisor::new(vm.clone(), settings.clone());
+    // Things to do to the running Mac after so many seconds, for trying them without the window.
+    let (mut report_after, mut shut_down_after) = (None, None);
     while let Some(flag) = args.next() {
         let value = args.next().with_context(|| format!("{flag} needs a value"))?;
         match flag.as_str() {
             "--debug-qmp" => supervisor.debug_qmp_port = Some(value.parse().context("--debug-qmp needs a port number")?),
             "--install-media" => supervisor.install_media = Some(PathBuf::from(value)),
             "--qemu-arg" => supervisor.extra_qemu_args.push(value),
+            "--report-after" => report_after = Some(value.parse::<u64>().context("--report-after needs a number of seconds")?),
+            "--shut-down-after" => shut_down_after = Some(value.parse::<u64>().context("--shut-down-after needs a number of seconds")?),
             _ => bail!("unknown option {flag}"),
         }
     }
 
     let (event_sender, event_receiver) = mpsc::channel();
-    let (_command_sender, command_receiver) = mpsc::channel();
+    let (command_sender, command_receiver) = mpsc::channel();
+    if let Some(seconds) = report_after {
+        let (vm, settings, commands) = (vm.clone(), settings.clone(), command_sender.clone());
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(seconds));
+            match orchord_core::diagnostics::save(&vm, &settings, Some(&commands)) {
+                Ok(path) => println!("diagnostic report: {}", path.display()),
+                Err(error) => println!("no diagnostic report: {error:#}"),
+            }
+        });
+    }
+    if let Some(seconds) = shut_down_after {
+        let commands = command_sender.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(seconds));
+            println!("asking the Mac to shut down");
+            let _ = commands.send(orchord_core::VmCommand::AskShutDown);
+        });
+    }
     let started = Instant::now();
     let worker = std::thread::spawn(move || if easy { easy_install::run(vm, settings, event_sender, command_receiver) } else { supervisor.run(event_sender, command_receiver) });
     for event in event_receiver {
@@ -100,6 +122,7 @@ fn main() -> Result<()> {
         }
     }
     let _ = worker.join();
+    drop(command_sender);
     Ok(())
 }
 

@@ -836,12 +836,14 @@ fn size_text(bytes: u64) -> String {
 
 /// Machine > Save Diagnostic Report: everything someone helping from afar would ask for.
 fn save_diagnostics(ui: Ui, state: &Shared) {
-    let (vm, settings) = {
+    let (vm, settings, running) = {
         let state = state.borrow();
         let Some(index) = target_index(ui, &state) else { return };
-        (state.rows[index].vm.clone(), state.settings.clone())
+        // While the Mac runs, its QEMU can say what the processors are doing right now, which
+        // is the one thing that shows where a stuck Mac is stuck.
+        (state.rows[index].vm.clone(), state.settings.clone(), state.rows[index].commands.clone())
     };
-    match busy::wait(&ui.frame, "Writing the diagnostic report.", move || diagnostics::save(&vm, &settings)) {
+    match busy::wait(&ui.frame, "Writing the diagnostic report.", move || diagnostics::save(&vm, &settings, running.as_ref())) {
         Ok(path) => {
             // File Explorer opens with the report selected, ready to be sent or copied.
             let _ = std::process::Command::new("explorer.exe").arg(format!("/select,{}", path.display())).spawn();

@@ -57,6 +57,21 @@ While the keyboard is captured, Right Control and the Menu key work as extra Com
 because Windows keeps Windows+L for itself. This can be turned off in the Machine menu.
 While it is captured every key goes to the Mac, F11 and Delete included.
 
+## Shutting a Mac down
+
+Power, Shut Down asks macOS to shut down the way a person at the Mac would, and what that
+takes depends on where the Mac is. Orchord reads the Mac's screen to find out:
+
+- At a new Mac's first set-up screens it presses Command+Q and answers the Setup
+  Assistant's question.
+- At the login window, with nobody logged in, it clicks the window's own Shut Down button.
+- Anywhere else it presses Control+Power and answers macOS's question.
+
+It says in the status log which of these it did. If the Mac is still running 45 seconds
+later, for instance because a program in it is asking to save something, Orchord asks
+whether to power it off, and Enter answers No. What it saw each time is kept in
+`shut-down.log` in the Mac's `vmconfig` folder.
+
 ## Updates
 
 When Orchord starts it asks GitHub whether a newer version has been published, and says so if
@@ -87,7 +102,8 @@ firmware, up to the hand-over to macOS), `serial.log` (macOS itself) and `qemu.l
 
 Tested on an Intel Core i7-1355U laptop:
 
-- macOS Big Sur 11, Monterey 12 and Sequoia 15 install and run, with VoiceOver speaking.
+- macOS Big Sur 11, Monterey 12, Sonoma 14 and Sequoia 15 install and run, with VoiceOver
+  speaking.
 - VoiceOver cannot speak inside Monterey's installer, so Monterey needs easy install.
 - Catalina 10.15 boots but has no sound. Lion 10.7 and Mountain Lion 10.8 do not boot.
 - Apple silicon versions of macOS are out of scope.
@@ -110,8 +126,10 @@ responsive; animation is not.
   request into its log. None of this could be tried here, where the only PC is an Intel one.
   If a Mac does not start on your AMD PC, a diagnostic report (Machine menu) attached to an
   issue shows exactly what stopped it.
-- Easy install has run from start to finish for Big Sur, from Apple's download and from an
-  ISO. For Monterey and Sequoia only its first stage has been run.
+- Easy install has run from start to finish for Big Sur (from Apple's download and from an
+  ISO) and for Sonoma. For Monterey and Sequoia only its first stage has been run.
+- Whether VoiceOver can speak inside Sonoma's installer has not been checked; easy install
+  does not need it to.
 - Handing a USB device to a Mac has not worked yet: it needs the UsbDk driver, which was not
   installed on the test PC.
 - Whether a screen reader on Windows lets go of its own keys while the keyboard is sent to

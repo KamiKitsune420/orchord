@@ -45,6 +45,9 @@ const ID_CHECK_UPDATES: Id = ID_HIGHEST + 21;
 const ID_FULL_SCREEN: Id = ID_HIGHEST + 22;
 const ID_DELETE: Id = ID_HIGHEST + 23;
 const ID_DIAGNOSTICS: Id = ID_HIGHEST + 24;
+/// wxWidgets' "No is the default button" flag for a Yes/No question, which the wx bindings do
+/// not name. It is for questions where a careless Enter must not do the drastic thing.
+const NO_IS_DEFAULT: i64 = 0x80;
 /// Added to every message about Orchord not being set up, so the user knows where to fix it.
 const SETTINGS_HINT: &str = "Open Orchord Settings in the File menu, or press Control+Comma.";
 
@@ -82,11 +85,33 @@ struct Row {
     commands: Option<Sender<VmCommand>>,
     /// Serves the shared folder while the Mac runs, if the folder is turned on.
     file_server: Option<FileServer>,
+    /// When macOS was last asked to shut down, until it has, or the user has been asked about it.
+    asked_to_stop: Option<Instant>,
 }
+
+/// How long macOS is given to shut down when asked, before Orchord asks its user what to do.
+/// macOS does not obey when a program in it objects, or when it is somewhere that has no
+/// shut-down question to answer; without this the Shut Down command would then just do nothing.
+const STOP_WAIT: Duration = Duration::from_secs(45);
 
 impl Row {
     fn new(vm: Vm) -> Self {
-        Row { vm, state: RunState::Stopped, events: None, commands: None, file_server: None }
+        Row { vm, state: RunState::Stopped, events: None, commands: None, file_server: None, asked_to_stop: None }
+    }
+
+    /// The command channel of a Mac that was asked to shut down long enough ago and is still
+    /// running. Returns it once; after that the Mac counts as not having been asked.
+    fn overdue_stop(&mut self) -> Option<Sender<VmCommand>> {
+        let asked = self.asked_to_stop?;
+        if !self.is_active() {
+            self.asked_to_stop = None;
+            return None;
+        }
+        if asked.elapsed() < STOP_WAIT {
+            return None;
+        }
+        self.asked_to_stop = None;
+        self.commands.clone()
     }
 
     fn is_active(&self) -> bool {
@@ -570,9 +595,11 @@ fn power_restart(ui: Ui, state: &Shared) {
 }
 
 fn power_shut_down(ui: Ui, state: &Shared) {
-    let Some((_, commands, name)) = running_target(ui, &state.borrow()) else { return };
+    let mut state = state.borrow_mut();
+    let Some((index, commands, name)) = running_target(ui, &state) else { return };
     let _ = commands.send(VmCommand::AskShutDown);
-    log_line(ui, &format!("Asked {name} to shut down. If nothing happens, nobody is logged in to the Mac; use Force Power Off in the Machine menu."));
+    state.rows[index].asked_to_stop = Some(Instant::now());
+    log_line(ui, &format!("Asked {name} to shut down. macOS can take a while, or refuse. If {name} is still running in {} seconds, Orchord asks whether to power it off.", STOP_WAIT.as_secs()));
 }
 
 fn force_restart(ui: Ui, state: &Shared) {
@@ -794,9 +821,7 @@ fn delete_selected(ui: Ui, state: &Shared) {
         (row.vm.config.name.clone(), row.vm.dir.clone(), size_text(row.vm.disk_bytes()))
     };
     let question = format!("Delete the virtual machine {name}? Its disk, {size}, and its settings will be removed from this PC for good. This cannot be undone.");
-    // wxWidgets' "No is the default button" flag, which the wx bindings do not name. With it,
-    // Delete followed by Enter keeps the Mac.
-    const NO_IS_DEFAULT: i64 = 0x80;
+    // With No as the default button, Delete followed by Enter keeps the Mac.
     let style = MessageDialogStyle::YesNo | MessageDialogStyle::from_bits_retain(NO_IS_DEFAULT) | MessageDialogStyle::IconWarning;
     if MessageDialog::builder(&ui.frame, &question, "Delete Virtual Machine").with_style(style).build().show_modal() != ID_YES {
         return;
@@ -869,6 +894,7 @@ fn reload(ui: Ui, state: &Shared) {
 /// release gesture, and asks for a fresh picture of the Mac's screen.
 fn tick(ui: Ui, state: &Shared) {
     let mut notices = Vec::new();
+    let mut still_running: Vec<(String, Sender<VmCommand>)> = Vec::new();
     {
         // A dialog shown from inside a tick keeps the timer running; that inner tick must wait.
         let Ok(mut state) = state.try_borrow_mut() else { return };
@@ -878,6 +904,11 @@ fn tick(ui: Ui, state: &Shared) {
         pump_events(ui, &mut state, &mut notices);
         for note in state.notes.try_iter().collect::<Vec<_>>() {
             log_line(ui, &note);
+        }
+        for row in state.rows.iter_mut() {
+            if let Some(commands) = row.overdue_stop() {
+                still_running.push((row.vm.config.name.clone(), commands));
+            }
         }
         // The answer to the question asked of GitHub when Orchord started, if there is news.
         if let Some(release) = state.update_news.as_ref().and_then(|news| news.try_recv().ok()) {
@@ -896,6 +927,14 @@ fn tick(ui: Ui, state: &Shared) {
     // Shown after the borrow ends: a modal dialog runs its own event loop, and the timer may tick inside it.
     for notice in notices {
         show_error(ui.frame, &notice);
+    }
+    for (name, commands) in still_running {
+        let question = format!("{name} was asked to shut down {} seconds ago and is still running. macOS may be waiting for an answer inside the Mac, or be somewhere it cannot shut down from.\n\nPower {name} off now? macOS is not shut down first, and unsaved work in the Mac would be lost.", STOP_WAIT.as_secs());
+        // Enter answers No: the Mac may be in the middle of shutting down after all.
+        let style = MessageDialogStyle::YesNo | MessageDialogStyle::from_bits_retain(NO_IS_DEFAULT) | MessageDialogStyle::IconWarning;
+        if MessageDialog::builder(&ui.frame, &question, "Shut Down").with_style(style).build().show_modal() == ID_YES {
+            let _ = commands.send(VmCommand::ForceStop);
+        }
     }
     pump_creation(ui, state);
 }

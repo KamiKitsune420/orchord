@@ -24,8 +24,9 @@ use anyhow::{Context, Result};
 
 use crate::config::{InstallStage, Vm};
 use crate::installer_image;
+use crate::ocr::{self, ScreenText};
 use crate::qemu::{LaunchOptions, build_args};
-use crate::qmp::QmpClient;
+use crate::qmp::{POINTER_MAX, QmpClient};
 use crate::settings::AppSettings;
 use crate::sound;
 
@@ -37,6 +38,20 @@ const POLL_INTERVAL: Duration = Duration::from_millis(500);
 const COMMAND_WAIT: Duration = Duration::from_millis(15);
 /// How long macOS is given to put its power dialog on screen before the answer is typed.
 const POWER_DIALOG_WAIT: Duration = Duration::from_millis(2500);
+/// How long macOS is given to put its shut-down question up, looked for every `POWER_DIALOG_WAIT`.
+const POWER_QUESTION_LIMIT: Duration = Duration::from_secs(20);
+/// Words common to both of macOS's shut-down questions: "Are you sure you want to shut down
+/// your computer now?" and the Setup Assistant's "Do you want to shut down your computer?".
+/// Both are broken over two lines, after "your" and after "down", and text is recognised a
+/// line at a time, so the words looked for must all be on the first line of each.
+const POWER_QUESTION: &str = "want to shut down";
+/// The names under the buttons along the bottom of macOS's login window. All three together,
+/// with no shut-down question on screen, mean that nobody is logged in.
+const LOGIN_WINDOW: [&str; 3] = ["Shut Down", "Restart", "Sleep"];
+/// How far above its name a login-window button's picture is, in the screen's own pixels.
+const BUTTON_PICTURE_ABOVE_NAME: f32 = 26.0;
+/// Words on the first screens of a Mac that has just been installed.
+const SETUP_SCREENS: [&str; 4] = ["Country or Region", "Select Your Country", "Written and Spoken Languages", "set up your Mac with VoiceOver"];
 /// A Mac disk image this large holds more than a freshly erased disk: the installer has
 /// copied itself there, and the Mac can carry on without the installer image.
 const INSTALLER_COPIED_BYTES: u64 = 6 << 30;
@@ -272,13 +287,8 @@ impl Supervisor {
                         let _ = events.send(VmEvent::Resumed);
                     }
                     VmCommand::Suspend | VmCommand::Resume => {}
-                    VmCommand::AskShutDown | VmCommand::AskRestart => {
-                        // Control+Power opens macOS's "Are you sure you want to shut down" dialog.
-                        // There, Return chooses Shut Down and R chooses Restart.
-                        let _ = qmp.send_keys(&["ctrl", "power"]);
-                        std::thread::sleep(POWER_DIALOG_WAIT);
-                        let _ = qmp.send_keys(&[if matches!(command, VmCommand::AskRestart) { "r" } else { "ret" }]);
-                    }
+                    VmCommand::AskShutDown => self.ask_to_stop(qmp, events, false),
+                    VmCommand::AskRestart => self.ask_to_stop(qmp, events, true),
                     VmCommand::SendKeys(keys) => {
                         let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
                         let _ = qmp.send_keys(&keys);
@@ -335,7 +345,149 @@ impl Supervisor {
         command.spawn().with_context(|| format!("starting {}", self.settings.qemu_exe().display()))
     }
 
-    /// The last meaningful lines QEMU wrote, for error messages.
+    /// Asks macOS to shut down, or to restart, the way someone at the Mac would.
+    ///
+    /// What works depends on where the Mac is, so the screen is looked at first, and an answer
+    /// is only typed once the screen shows the question it answers. Nothing is typed blind: a
+    /// stray Return in a Mac someone is working in could do anything.
+    ///
+    /// * A new Mac at its first set-up screens: Command+Q makes the Setup Assistant ask "Do you
+    ///   want to shut down your computer?", and Return says yes. Control+Power must not be
+    ///   used there: its question appears and can be answered, but the Setup Assistant then
+    ///   refuses to quit and macOS gives up with "Setup Assistant failed to quit".
+    /// * Anywhere else: Control+Power brings up "Are you sure you want to shut down your
+    ///   computer now?", where Return shuts down and R restarts.
+    /// * If that did not bring the question, the power button, pressed through ACPI, may.
+    ///
+    /// If nothing gets a question, nothing more is done; the window notices that the Mac is
+    /// still running and asks its user what to do.
+    fn ask_to_stop(&self, qmp: &mut QmpClient, events: &Sender<VmEvent>, restart: bool) {
+        // Each step is told to the user: a Mac that does not obey should at least say why.
+        let tell = |text: &str| {
+            self.power_diary(&format!("said: {text}"));
+            let _ = events.send(VmEvent::InstallNote(text.to_string()));
+        };
+        self.power_diary(if restart { "asked to restart" } else { "asked to shut down" });
+        let first_look = self.look(qmp);
+        let shows = |phrases: &[&str]| first_look.as_ref().is_some_and(|screen| phrases.iter().any(|phrase| screen.contains(phrase)));
+        // The login window, with nobody logged in. Neither keys nor the power button bring a
+        // question there; the window has buttons of its own along the bottom, each a picture
+        // with its name beneath it.
+        if LOGIN_WINDOW.iter().all(|name| shows(&[name])) && !shows(&[POWER_QUESTION]) {
+            let name = if restart { "Restart" } else { "Shut Down" };
+            if let Some(screen) = &first_look {
+                self.click_button_named(qmp, screen, name);
+                // The picture is the button on some versions and the name on others.
+                std::thread::sleep(POWER_DIALOG_WAIT * 2);
+                if let Some(screen) = self.look(qmp).filter(|screen| LOGIN_WINDOW.iter().all(|name| screen.contains(name))) {
+                    self.click_button_named(qmp, &screen, name);
+                }
+            }
+            tell(if restart { "Nobody is logged in to the Mac. Orchord pressed Restart in its login window." } else { "Nobody is logged in to the Mac. Orchord pressed Shut Down in its login window." });
+            return;
+        }
+        if !restart && shows(&SETUP_SCREENS) {
+            let _ = qmp.send_keys(&["meta_l", "q"]);
+            if self.screen_comes_to_show(qmp, POWER_QUESTION) {
+                self.answer_question(qmp, "ret");
+                tell("The Mac is at its first set-up screens. Its Setup Assistant asked whether to shut down, and Orchord answered yes.");
+            } else {
+                tell("The Mac is at its first set-up screens, but its Setup Assistant did not ask whether to shut down.");
+            }
+            return;
+        }
+        let answer = if restart { "r" } else { "ret" };
+        let done = if restart { "macOS asked whether to shut down, and Orchord chose Restart." } else { "macOS asked whether to shut down, and Orchord answered yes." };
+        let _ = qmp.send_keys(&["ctrl", "power"]);
+        if self.screen_comes_to_show(qmp, POWER_QUESTION) {
+            self.answer_question(qmp, answer);
+            tell(done);
+            return;
+        }
+        let _ = qmp.execute("system_powerdown", None);
+        if self.screen_comes_to_show(qmp, POWER_QUESTION) {
+            self.answer_question(qmp, answer);
+            tell(done);
+        } else {
+            tell("macOS did not show its shut-down question, so nothing was answered. It may still be starting.");
+        }
+    }
+
+    /// Presses `key` as the answer to the shut-down question that is on the Mac's screen. A
+    /// question takes no keys while it is still sliding into place, so the key is pressed
+    /// after a pause, and once more if the question is still there afterwards.
+    fn answer_question(&self, qmp: &mut QmpClient, key: &str) {
+        std::thread::sleep(POWER_DIALOG_WAIT);
+        let _ = qmp.send_keys(&[key]);
+        std::thread::sleep(POWER_DIALOG_WAIT * 2);
+        if self.screen_shows(qmp, &[POWER_QUESTION]) {
+            let _ = qmp.send_keys(&[key]);
+        }
+    }
+
+    /// Watches the Mac's screen until it shows `phrase`, for as long as a busy Mac may need to
+    /// put a question up. A single look after a fixed pause missed the question on a PC that
+    /// was busy: the Setup Assistant took longer than the pause to ask.
+    fn screen_comes_to_show(&self, qmp: &mut QmpClient, phrase: &str) -> bool {
+        let asked = Instant::now();
+        while asked.elapsed() < POWER_QUESTION_LIMIT {
+            std::thread::sleep(POWER_DIALOG_WAIT);
+            if self.screen_shows(qmp, &[phrase]) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Whether the Mac's screen shows any of `phrases` right now.
+    fn screen_shows(&self, qmp: &mut QmpClient, phrases: &[&str]) -> bool {
+        let shown = self.look(qmp).is_some_and(|screen| phrases.iter().any(|phrase| screen.contains(phrase)));
+        self.power_diary(&format!("looked for {phrases:?}: {}", if shown { "found" } else { "not found" }));
+        shown
+    }
+
+    /// Reads the text on the Mac's screen as it is right now, and notes it in the diary.
+    fn look(&self, qmp: &mut QmpClient) -> Option<ScreenText> {
+        let picture = self.vm.config_dir().join("power-screen.ppm");
+        let taken = qmp.screendump(&picture);
+        let screen = ocr::read_ppm(&picture);
+        let _ = std::fs::remove_file(&picture);
+        let seen: String = match &screen {
+            Ok(screen) => screen.text().split_whitespace().collect::<Vec<_>>().join(" ").chars().take(240).collect(),
+            Err(error) => format!("nothing: {error:#}"),
+        };
+        self.power_diary(&format!("the screen said: {seen}"));
+        screen.ok().filter(|_| taken.is_ok())
+    }
+
+    /// Clicks a button that is a picture with `name` written beneath it: first the picture,
+    /// which is where the name's middle is, a little higher up.
+    fn click_button_named(&self, qmp: &mut QmpClient, screen: &ScreenText, name: &str) {
+        let words: Vec<&str> = name.split_whitespace().collect();
+        let Some(first) = screen.find(name) else { return };
+        // The name's last word, on the same line, gives where the name ends.
+        let last = screen.find_exact(words[words.len() - 1]).into_iter().find(|word| (word.y - first.y).abs() < first.height).unwrap_or(first);
+        let middle = (first.x + last.x + last.width) / 2.0;
+        let scale = |value: f32, size: u32| ((value / size.max(1) as f32).clamp(0.0, 1.0) * POINTER_MAX as f32) as u16;
+        self.power_diary(&format!("clicked {name} at {middle:.0}, {:.0}", first.y - BUTTON_PICTURE_ABOVE_NAME));
+        let _ = qmp.pointer_move(scale(middle, screen.width), scale(first.y - BUTTON_PICTURE_ABOVE_NAME, screen.height));
+        std::thread::sleep(Duration::from_millis(350));
+        let _ = qmp.pointer_button("left", true);
+        std::thread::sleep(Duration::from_millis(130));
+        let _ = qmp.pointer_button("left", false);
+    }
+
+    /// Adds a line to `vmconfig\shut-down.log`: what was looked for on the Mac's screen and
+    /// what was found, each time the Mac is asked to shut down or restart. When a Mac will
+    /// not obey, this says which of its screens it was at.
+    fn power_diary(&self, text: &str) {
+        use std::io::Write;
+        if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(self.vm.config_dir().join("shut-down.log")) {
+            let seconds = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_secs() % 86_400);
+            let _ = writeln!(file, "[{:02}:{:02}:{:02} UTC] {text}", seconds / 3600, seconds / 60 % 60, seconds % 60);
+        }
+    }
+
     fn qemu_log_tail(&self) -> String {
         let text = std::fs::read_to_string(self.vm.qemu_log_path()).unwrap_or_default();
         let lines: Vec<&str> = text.lines().filter(|line| !line.contains("host doesn't support requested feature") && !line.trim().is_empty()).collect();

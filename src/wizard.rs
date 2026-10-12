@@ -24,7 +24,7 @@ use crate::speech;
 const LICENCE_URL: &str = "https://www.apple.com/legal/sla/";
 const PAGE_NAMES: [&str; 4] = ["Name and location", "macOS version and installer", "Memory, processor and disk", "Overview"];
 /// Newest first: the newest is the one most people want.
-const VERSIONS: [MacosVersion; 3] = [MacosVersion::Sequoia, MacosVersion::Monterey, MacosVersion::BigSur];
+const VERSIONS: [MacosVersion; 4] = [MacosVersion::Sequoia, MacosVersion::Sonoma, MacosVersion::Monterey, MacosVersion::BigSur];
 const MEMORY_STEP_MB: i32 = 1024;
 
 /// What the user asked for.
@@ -90,7 +90,7 @@ pub fn run(parent: Frame, settings: &AppSettings) -> Option<Answers> {
     let file_browse = Button::builder(&page).with_label("Br&owse for the installer file...").build();
     let easy = CheckBox::builder(&page).with_label("Use &easy install: Orchord installs macOS by itself").with_value(true).build();
     let easy_note = StaticText::builder(&page)
-        .with_label("With easy install, Orchord prepares the new Mac's disk, starts the installer and accepts Apple's licence for you, then tells you when macOS is ready. Without it you do those steps yourself in the installer, where VoiceOver can speak for Big Sur and Sequoia but not for Monterey.")
+        .with_label("With easy install, Orchord prepares the new Mac's disk, starts the installer and accepts Apple's licence for you, then tells you when macOS is ready. Without it you do those steps yourself in the installer, where VoiceOver can speak for Big Sur and Sequoia, cannot for Monterey, and has not been tried for Sonoma.")
         .build();
     easy_note.wrap(520);
     let agree = CheckBox::builder(&page).with_label("I have read and &agree to the macOS software licence agreement").build();

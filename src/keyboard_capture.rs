@@ -11,7 +11,8 @@
 //!
 //! The keyboard is released by pressing Control and Alt together and letting go without
 //! touching another key. Control+Alt with another key is left alone, because Control+Option
-//! is VoiceOver's modifier.
+//! is VoiceOver's modifier. Either Control and either Alt will do, including a Right Control
+//! that is being sent to the Mac as Command.
 
 use std::ffi::c_void;
 use std::sync::Mutex;
@@ -103,6 +104,26 @@ fn forward(scancode: u8, down: bool) {
     }
 }
 
+/// What a key means to the capture, apart from being sent to the Mac.
+#[derive(Debug, PartialEq, Eq)]
+struct KeyRole {
+    /// Sent to the Mac as its right Command key instead of as itself.
+    extra_command: bool,
+    /// Counts as Control, or as Alt, for the release gesture.
+    is_control: bool,
+    is_alt: bool,
+}
+
+fn key_role(virtual_key: u32, right_control_is_command: bool) -> KeyRole {
+    KeyRole {
+        extra_command: virtual_key == VK_APPS || (virtual_key == VK_RCONTROL && right_control_is_command),
+        // For the release gesture either Control key counts, also the right one when it is sent
+        // to the Mac as Command: people reach for whichever Control and Alt are under their hand.
+        is_control: matches!(virtual_key, VK_LCONTROL | VK_RCONTROL),
+        is_alt: matches!(virtual_key, VK_LMENU | VK_RMENU),
+    }
+}
+
 unsafe extern "system" fn hook_procedure(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     let pass_on = || unsafe { CallNextHookEx(std::ptr::null_mut(), code, wparam, lparam) };
     if code != HC_ACTION as i32 || RELEASE_REQUESTED.load(Ordering::SeqCst) {
@@ -118,9 +139,7 @@ unsafe extern "system" fn hook_procedure(code: i32, wparam: WPARAM, lparam: LPAR
     }
 
     let down = matches!(wparam as u32, WM_KEYDOWN | WM_SYSKEYDOWN);
-    let extra_command = key.vkCode == VK_APPS || (key.vkCode == VK_RCONTROL && RIGHT_CONTROL_IS_COMMAND.load(Ordering::SeqCst));
-    let is_control = matches!(key.vkCode, VK_LCONTROL | VK_RCONTROL) && !extra_command;
-    let is_alt = matches!(key.vkCode, VK_LMENU | VK_RMENU);
+    let KeyRole { extra_command, is_control, is_alt } = key_role(key.vkCode, RIGHT_CONTROL_IS_COMMAND.load(Ordering::SeqCst));
     let extended = key.flags & LLKHF_EXTENDED != 0;
     let scancode = if extra_command { RIGHT_COMMAND_SCANCODE } else { key.scanCode as u8 | if extended { 0x80 } else { 0 } };
 
@@ -149,4 +168,26 @@ unsafe extern "system" fn hook_procedure(code: i32, wparam: WPARAM, lparam: LPAR
 
     forward(scancode, down);
     1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{VK_APPS, VK_LCONTROL, VK_LMENU, VK_RCONTROL, VK_RMENU, key_role};
+
+    #[test]
+    fn either_control_and_either_alt_count_for_the_release_gesture() {
+        for mapped in [true, false] {
+            assert!(key_role(VK_LCONTROL, mapped).is_control);
+            assert!(key_role(VK_RCONTROL, mapped).is_control, "Right Control counts even when it is sent as Command");
+            assert!(key_role(VK_LMENU, mapped).is_alt && key_role(VK_RMENU, mapped).is_alt);
+        }
+    }
+
+    #[test]
+    fn right_control_is_command_only_when_asked_and_the_menu_key_always() {
+        assert!(key_role(VK_RCONTROL, true).extra_command);
+        assert!(!key_role(VK_RCONTROL, false).extra_command);
+        assert!(!key_role(VK_LCONTROL, true).extra_command);
+        assert!(key_role(VK_APPS, false).extra_command);
+    }
 }
